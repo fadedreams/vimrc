@@ -1,3 +1,4 @@
+" :PlugInstall manually if auto install did not worked
 " ── Auto-install vim-plug ─────────────────────────────────────
 let s:plug_file = expand('~/.vim/autoload/plug.vim')
 let s:plug_url  = 'https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim'
@@ -8,6 +9,14 @@ if empty(glob(s:plug_file))
   autocmd VimEnter * PlugInstall --sync | source $MYVIMRC
 endif
 
+" ── Verify vim-plug loaded correctly ──────────────────────────
+if !filereadable(s:plug_file)
+  echohl WarningMsg
+  echo "[vimrc] vim-plug not found — retrying download..."
+  echohl None
+  execute 'silent !curl -fLo ' . s:plug_file . ' --create-dirs ' . s:plug_url . ' 2>/dev/null'
+endif
+
 " ══════════════════════════════════════════════════════════════
 "  .vimrc
 " ══════════════════════════════════════════════════════════════
@@ -15,7 +24,7 @@ endif
 " ── Plugins (vim-plug) ────────────────────────────────────────
 call plug#begin('~/.vim/plugged')
   Plug 'tpope/vim-commentary'       " gcc = toggle line comment, gc = comment motion
-  Plug 'tpope/vim-surround'         " cs\"' / ds( / ysiw[ — surround text objects
+  Plug 't:PlugInstallpope/vim-surround'         " cs\"' / ds( / ysiw[ — surround text objects
   Plug 'tpope/vim-repeat'           " makes . work with surround, commentary, etc.
   Plug 'tpope/vim-eunuch'           " file ops on current buffer:
                                     "   :Rename newname.js
@@ -26,18 +35,20 @@ call plug#begin('~/.vim/plugged')
                                     "   :SudoWrite               (save file opened without sudo)
   Plug 'jiangmiao/auto-pairs'       " auto-close (), [], {}, \"\"
   Plug 'mbbill/undotree'            " visualise undofile history  (<leader>u)
-  Plug 'ghifarit53/tokyonight-vim'  " tokyonight colorscheme
+  " Plug 'ghifarit53/tokyonight-vim'  " tokyonight colorscheme
   Plug 'luochen1990/rainbow'        " rainbow parentheses/brackets/braces
   Plug 'junegunn/fzf', { 'do': { -> fzf#install() } }
   Plug 'junegunn/fzf.vim'
 call plug#end()
 
 " ── Colorscheme ───────────────────────────────────────────────
-set t_Co=256                          " 256 color terminal
-let g:tokyonight_style = 'night'      " options: night, storm
-let g:tokyonight_enable_italic = 1    " italic keywords/comments
-colorscheme tokyonight
-
+" set t_Co=256
+silent! colorscheme habamax
+" let g:tokyonight_style  = 'night'
+" let g:tokyonight_enable_italic = 1
+" if !empty(glob('~/.vim/plugged/tokyonight-vim/colors/tokyonight.vim'))
+"   silent! colorscheme tokyonight
+" endif
 
 " ── Rainbow Parentheses ───────────────────────────────────────
 let g:rainbow_active = 1              " 1 = always on  |  :RainbowToggle to flip
@@ -163,6 +174,7 @@ nnoremap <leader>q  :q<CR>
 nnoremap <leader>e  :Explore<CR>
 nnoremap <leader>bn :bnext<CR>
 nnoremap <leader>bp :bprev<CR>
+nnoremap <C-\> :bdelete<CR>
 nnoremap <leader>bd :bdelete<CR>
 nnoremap <leader>bv :vnew<CR>
 nnoremap <leader>bs :new<CR>
@@ -650,6 +662,65 @@ endfunction
 
 nnoremap <silent> <leader>1 :call RipgrepWord(expand('<cword>'), 0)<CR>
 
+function! s:GrepUnderCursor2()
+  let l:line = getline('.')
+  let l:col  = col('.')
+  " Find the token under cursor, then sub-split on / and \
+  let l:s = searchpos('\S\+', 'bcn', line('.'))[1] - 1
+  let l:e = searchpos('\S\+', 'cen', line('.'))[1]
+  if l:s < 0 || l:e <= 0
+    echo "No token under cursor"
+    return
+  endif
+  let l:token = l:line[l:s : l:e - 1]
+  " Split on / or \ and pick the segment the cursor is on
+  let l:cur_start = 0
+  let l:seg_start = 0
+  let l:seg_end   = len(l:token)
+  let l:i = 0
+  while l:i < len(l:token)
+    let l:ch = l:token[l:i]
+    if l:ch ==# '/' || l:ch ==# '\'
+      let l:abs_s = l:s + l:cur_start
+      let l:abs_e = l:s + l:i
+      if l:col - 1 >= l:abs_s && l:col - 1 < l:abs_e
+        let l:seg_start = l:cur_start
+        let l:seg_end   = l:i
+        break
+      endif
+      let l:cur_start = l:i + 1
+    endif
+    let l:i += 1
+  endwhile
+  " If no separator matched above, use the last segment
+  if l:seg_start == 0 && l:seg_end == len(l:token)
+    let l:seg_start = l:cur_start
+  endif
+  let l:word = l:token[l:seg_start : l:seg_end - 1]
+  if l:word ==# ''
+    echo "No token under cursor"
+    return
+  endif
+  call RipgrepWord(l:word, 0)
+endfunction
+
+nnoremap <silent> <leader>2 :call <SID>GrepUnderCursor2()<CR>
+
+function! s:GrepUnderCursor3()
+  let l:line = getline('.')
+  let l:col  = col('.')
+  " Grab the full non-whitespace token under cursor (includes / \ and punctuation)
+  let l:s = searchpos('\S\+', 'bcn', line('.'))[1] - 1
+  let l:e = searchpos('\S\+', 'cen', line('.'))[1]
+  if l:s < 0 || l:e <= 0
+    echo "No token under cursor"
+    return
+  endif
+  call RipgrepWord(l:line[l:s : l:e - 1], 0)
+endfunction
+
+nnoremap <silent> <leader>3 :call <SID>GrepUnderCursor3()<CR>
+
 
 " ══════════════════════════════════════════════════════════════
 "  Custom Statusline
@@ -746,8 +817,8 @@ function! SLSearch()
     if !v:hlsearch | return '' | endif
     try
         let s = searchcount({'maxcount': 999})
-        if s.total == 0 | return '' | endif
-        return '%#SLExtra#  ' . s.current . '/' . s.total . ' '
+        if empty(s) || !has_key(s, 'total') || s.total == 0 | return '' | endif
+        return '%#SLExtra# ' . s.current . '/' . s.total . ' '
     catch
         return ''
     endtry
