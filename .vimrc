@@ -206,7 +206,19 @@ set nobackup
 set undofile
 set undodir=~/.vim/undo//
 set encoding=utf-8
+
 set fileformats=unix,dos
+" ── Auto-create missing directories ───────────────────────────
+function! s:AutoMkdir(dir)
+  if !isdirectory(a:dir)
+    call mkdir(a:dir, 'p', 0755)
+  endif
+endfunction
+
+augroup AutoMkdir
+  autocmd!
+  autocmd BufNewFile * call s:AutoMkdir(expand('<afile>:p:h'))
+augroup END
 
 " Make sure undo dir exists
 if !isdirectory(expand('~/.vim/undo'))
