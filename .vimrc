@@ -106,12 +106,13 @@ endif
 
 call s:InstallFzfDeps()
 
+
 " ══════════════════════════════════════════════════════════════
 "  .vimrc
 " ══════════════════════════════════════════════════════════════
 
 " ── Plugins (vim-plug) ────────────────────────────────────────
-call plug#begin('~/.vim/plugged')
+silent! call plug#begin('~/.vim/plugged')
   Plug 'tpope/vim-commentary'       " gcc = toggle line comment, gc = comment motion
   Plug 'tpope/vim-surround'         " cs\"' / ds( / ysiw[ — surround text objects
   Plug 'tpope/vim-repeat'           " makes . work with surround, commentary, etc.
@@ -373,6 +374,19 @@ nnoremap <C-Left>  <C-w>h
 nnoremap <C-Right> <C-w>l
 nnoremap <C-Up>    <C-w>k
 nnoremap <C-Down>  <C-w>j
+
+" git
+function! s:JumpConflict(direction)
+  let pattern = '^\(<<<<<<\|=======\|>>>>>>>\)'
+  let flags = a:direction ==# 'next' ? 'W' : 'bW'
+  let ok = search(pattern, flags)
+  if ok == 0
+    echo "No more conflict markers"
+  endif
+endfunction
+
+nnoremap ]g <Cmd>call <SID>JumpConflict('next')<CR>
+nnoremap [g <Cmd>call <SID>JumpConflict('prev')<CR>
 
 " ── Buffer management ─────────────────────────────────────────
 nnoremap <silent> <C-\>      :bdelete!<CR>
