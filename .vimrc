@@ -32,7 +32,7 @@ function! s:InstallFzfDeps()
       call add(l:pkgs, tool ==# 'fd' ? 'fd-find' :
             \           tool ==# 'rg' ? 'ripgrep' : tool)
     endfor
-    execute 'silent !sudo apt-get install -y ' . join(l:pkgs, ' ')
+    call system('sudo apt-get install -y ' . join(l:pkgs, ' '))
 
   elseif executable('pacman')
     let l:pkgs = []
@@ -40,7 +40,7 @@ function! s:InstallFzfDeps()
       call add(l:pkgs, tool ==# 'fd' ? 'fd' :
             \           tool ==# 'rg' ? 'ripgrep' : tool)
     endfor
-    execute 'silent !sudo pacman -S --noconfirm ' . join(l:pkgs, ' ')
+    call system('sudo pacman -S --noconfirm ' . join(l:pkgs, ' '))
 
   elseif executable('dnf')
     let l:pkgs = []
@@ -48,7 +48,7 @@ function! s:InstallFzfDeps()
       call add(l:pkgs, tool ==# 'fd' ? 'fd-find' :
             \           tool ==# 'rg' ? 'ripgrep' : tool)
     endfor
-    execute 'silent !sudo dnf install -y ' . join(l:pkgs, ' ')
+    call system('sudo dnf install -y ' . join(l:pkgs, ' '))
 
   elseif executable('yum')
     let l:pkgs = []
@@ -56,7 +56,7 @@ function! s:InstallFzfDeps()
       call add(l:pkgs, tool ==# 'fd' ? 'fd-find' :
             \           tool ==# 'rg' ? 'ripgrep' : tool)
     endfor
-    execute 'silent !sudo yum install -y ' . join(l:pkgs, ' ')
+    call system('sudo yum install -y ' . join(l:pkgs, ' '))
 
   elseif executable('zypper')
     let l:pkgs = []
@@ -64,7 +64,7 @@ function! s:InstallFzfDeps()
       call add(l:pkgs, tool ==# 'fd' ? 'fd' :
             \           tool ==# 'rg' ? 'ripgrep' : tool)
     endfor
-    execute 'silent !sudo zypper install -y ' . join(l:pkgs, ' ')
+    call system('sudo zypper install -y ' . join(l:pkgs, ' '))
 
   elseif executable('apk')
     let l:pkgs = []
@@ -72,7 +72,7 @@ function! s:InstallFzfDeps()
       call add(l:pkgs, tool ==# 'fd' ? 'fd' :
             \           tool ==# 'rg' ? 'ripgrep' : tool)
     endfor
-    execute 'silent !sudo apk add ' . join(l:pkgs, ' ')
+    call system('sudo apk add ' . join(l:pkgs, ' '))
 
   elseif executable('brew')
     let l:pkgs = []
@@ -80,7 +80,7 @@ function! s:InstallFzfDeps()
       call add(l:pkgs, tool ==# 'fd' ? 'fd' :
             \           tool ==# 'rg' ? 'ripgrep' : tool)
     endfor
-    execute 'silent !brew install ' . join(l:pkgs, ' ')
+    call system('brew install ' . join(l:pkgs, ' '))
 
   else
     echohl WarningMsg
