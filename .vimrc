@@ -5,11 +5,10 @@ let s:plug_url  = 'https://raw.githubusercontent.com/junegunn/vim-plug/master/pl
 
 if empty(glob(s:plug_file))
   call system('curl -fsLo ' . s:plug_file . ' --create-dirs ' . s:plug_url)
-  autocmd VimEnter * execute 'source ' . s:plug_file | PlugInstall --sync | source $MYVIMRC
 endif
 
-if !filereadable(s:plug_file)
-  call system('curl -fsLo ' . s:plug_file . ' --create-dirs ' . s:plug_url)
+if filereadable(s:plug_file)
+  execute 'source ' . s:plug_file
 endif
 
 " ── Install fzf / ripgrep / fd (cross-distro) ────────────────
@@ -32,7 +31,7 @@ function! s:InstallFzfDeps()
       call add(l:pkgs, tool ==# 'fd' ? 'fd-find' :
             \           tool ==# 'rg' ? 'ripgrep' : tool)
     endfor
-    call system('sudo apt-get install -y ' . join(l:pkgs, ' '))
+    execute 'silent !sudo apt-get install -y ' . join(l:pkgs, ' ')
 
   elseif executable('pacman')
     let l:pkgs = []
@@ -40,7 +39,7 @@ function! s:InstallFzfDeps()
       call add(l:pkgs, tool ==# 'fd' ? 'fd' :
             \           tool ==# 'rg' ? 'ripgrep' : tool)
     endfor
-    call system('sudo pacman -S --noconfirm ' . join(l:pkgs, ' '))
+    execute 'silent !sudo pacman -S --noconfirm ' . join(l:pkgs, ' ')
 
   elseif executable('dnf')
     let l:pkgs = []
@@ -48,7 +47,7 @@ function! s:InstallFzfDeps()
       call add(l:pkgs, tool ==# 'fd' ? 'fd-find' :
             \           tool ==# 'rg' ? 'ripgrep' : tool)
     endfor
-    call system('sudo dnf install -y ' . join(l:pkgs, ' '))
+    execute 'silent !sudo dnf install -y ' . join(l:pkgs, ' ')
 
   elseif executable('yum')
     let l:pkgs = []
@@ -56,7 +55,7 @@ function! s:InstallFzfDeps()
       call add(l:pkgs, tool ==# 'fd' ? 'fd-find' :
             \           tool ==# 'rg' ? 'ripgrep' : tool)
     endfor
-    call system('sudo yum install -y ' . join(l:pkgs, ' '))
+    execute 'silent !sudo yum install -y ' . join(l:pkgs, ' ')
 
   elseif executable('zypper')
     let l:pkgs = []
@@ -64,7 +63,7 @@ function! s:InstallFzfDeps()
       call add(l:pkgs, tool ==# 'fd' ? 'fd' :
             \           tool ==# 'rg' ? 'ripgrep' : tool)
     endfor
-    call system('sudo zypper install -y ' . join(l:pkgs, ' '))
+    execute 'silent !sudo zypper install -y ' . join(l:pkgs, ' ')
 
   elseif executable('apk')
     let l:pkgs = []
@@ -72,7 +71,7 @@ function! s:InstallFzfDeps()
       call add(l:pkgs, tool ==# 'fd' ? 'fd' :
             \           tool ==# 'rg' ? 'ripgrep' : tool)
     endfor
-    call system('sudo apk add ' . join(l:pkgs, ' '))
+    execute 'silent !sudo apk add ' . join(l:pkgs, ' ')
 
   elseif executable('brew')
     let l:pkgs = []
@@ -80,7 +79,7 @@ function! s:InstallFzfDeps()
       call add(l:pkgs, tool ==# 'fd' ? 'fd' :
             \           tool ==# 'rg' ? 'ripgrep' : tool)
     endfor
-    call system('brew install ' . join(l:pkgs, ' '))
+    execute 'silent !brew install ' . join(l:pkgs, ' ')
 
   else
     echohl WarningMsg
