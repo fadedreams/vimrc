@@ -4,17 +4,12 @@ let s:plug_file = expand('~/.vim/autoload/plug.vim')
 let s:plug_url  = 'https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim'
 
 if empty(glob(s:plug_file))
-  echo "Installing vim-plug..."
-  execute 'silent !curl -fLo ' . s:plug_file . ' --create-dirs ' . s:plug_url
+  call system('curl -fsLo ' . s:plug_file . ' --create-dirs ' . s:plug_url)
   autocmd VimEnter * execute 'source ' . s:plug_file | PlugInstall --sync | source $MYVIMRC
 endif
 
-" ── Verify vim-plug loaded correctly ──────────────────────────
 if !filereadable(s:plug_file)
-  echohl WarningMsg
-  echo "[vimrc] vim-plug not found — retrying download..."
-  echohl None
-  execute 'silent !curl -fLo ' . s:plug_file . ' --create-dirs ' . s:plug_url . ' 2>/dev/null'
+  call system('curl -fsLo ' . s:plug_file . ' --create-dirs ' . s:plug_url)
 endif
 
 " ── Install fzf / ripgrep / fd (cross-distro) ────────────────
