@@ -6,7 +6,7 @@ let s:plug_url  = 'https://raw.githubusercontent.com/junegunn/vim-plug/master/pl
 if empty(glob(s:plug_file))
   echo "Installing vim-plug..."
   execute 'silent !curl -fLo ' . s:plug_file . ' --create-dirs ' . s:plug_url
-  autocmd VimEnter * PlugInstall --sync | source $MYVIMRC
+  autocmd VimEnter * execute 'source ' . s:plug_file | PlugInstall --sync | source $MYVIMRC
 endif
 
 " ── Verify vim-plug loaded correctly ──────────────────────────
