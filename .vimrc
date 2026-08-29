@@ -1,3 +1,4 @@
+let mapleader = " "
 " :PlugInstall manually if auto install did not worked
 " ── Auto-install vim-plug ─────────────────────────────────────
 let s:plug_file = expand('~/.vim/autoload/plug.vim')
@@ -123,6 +124,7 @@ silent! call plug#begin('~/.vim/plugged')
   Plug 'luochen1990/rainbow'        " rainbow parentheses/brackets/braces
   Plug 'junegunn/fzf', { 'do': { -> fzf#install() } }
   Plug 'junegunn/fzf.vim'
+  Plug 'christoomey/vim-tmux-navigator'
 call plug#end()
 
 " ── Colorscheme ───────────────────────────────────────────────
@@ -221,6 +223,12 @@ endif
 
 
 " ── Splits ────────────────────────────────────────────────────
+nnoremap <C-w>% :vsplit<CR>
+nnoremap <C-w>" :split<CR>
+
+nnoremap <leader>b% :vsplit<CR>
+nnoremap <leader>b" :split<CR>
+
 set splitright
 set splitbelow
 nnoremap <C-h> <C-w>h
@@ -253,7 +261,6 @@ nnoremap <silent> <C-w><Down>  :call <SID>SwapWindow('j')<CR>
 "  Mappings
 " ══════════════════════════════════════════════════════════════
 
-let mapleader = " "
 
 " ── Files ─────────────────────────────────────────────────────
 nnoremap <A-w> :w<CR>
