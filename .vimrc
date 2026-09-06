@@ -13,6 +13,10 @@ if filereadable(s:plug_file)
 endif
 
 " ── Install fzf / ripgrep / fd (cross-distro) ────────────────
+" NOTE: this now only *installs* things when you explicitly run
+" :InstallFzfDeps. It used to run automatically on every startup,
+" which meant a missing dep silently triggered `sudo apt-get/...`
+" and Vim would hang waiting on a password prompt.
 function! s:InstallFzfDeps()
   let l:missing = []
 
@@ -92,6 +96,21 @@ function! s:InstallFzfDeps()
   echo '[deps] Done. Restart Vim if fzf keymaps seem broken.'
 endfunction
 
+" Lightweight startup check — only warns, never shells out to sudo.
+function! s:CheckFzfDeps()
+  let l:missing = []
+  if !executable('fzf')                            | call add(l:missing, 'fzf') | endif
+  if !executable('rg')                             | call add(l:missing, 'rg')  | endif
+  if !executable('fd') && !executable('fdfind')    | call add(l:missing, 'fd')  | endif
+  if !empty(l:missing)
+    echohl WarningMsg
+    echo '[deps] Missing: ' . join(l:missing, ', ') . ' — run :InstallFzfDeps to install'
+    echohl None
+  endif
+endfunction
+
+command! -bar InstallFzfDeps call s:InstallFzfDeps()
+
 " fd compat: Debian/Ubuntu install it as fdfind
 if !executable('fd') && executable('fdfind')
   let $FD = 'fdfind'
@@ -99,7 +118,7 @@ else
   let $FD = 'fd'
 endif
 
-call s:InstallFzfDeps()
+call s:CheckFzfDeps()
 
 
 " ══════════════════════════════════════════════════════════════
@@ -128,8 +147,11 @@ silent! call plug#begin('~/.vim/plugged')
 call plug#end()
 
 " ── Colorscheme ───────────────────────────────────────────────
-" set t_Co=256
 silent! colorscheme habamax
+if get(g:, 'colors_name', '') !=# 'habamax'
+  colorscheme desert
+endif
+
 " let g:tokyonight_style  = 'night'
 " let g:tokyonight_enable_italic = 1
 " if !empty(glob('~/.vim/plugged/tokyonight-vim/colors/tokyonight.vim'))
@@ -270,13 +292,13 @@ inoremap <A-q> <Esc>:q<CR>
 
 nnoremap <leader>q  :q<CR>
 nnoremap <leader>e  :Explore<CR>
-nnoremap <leader>bn :bnext<CR>
-nnoremap <leader>bp :bprev<CR>
-nnoremap <C-\> :bdelete<CR>
-nnoremap <leader>bd :bdelete<CR>
-nnoremap <leader>bv :vnew<CR>
-nnoremap <leader>bs :new<CR>
 nnoremap <C-BS>     :bd<CR>
+" Buffer next/prev/new/delete mappings live in the "Buffer
+" management" section below — that used to redefine <leader>bn,
+" <leader>bd, <C-\> etc. a second time, silently overriding the
+" versions that were here, and left <leader>bp orphaned pointing
+" at the old (pre-override) meaning of <leader>bn. Keeping one
+" definition per key avoids that mismatch.
 
 " ── Whitespace cleanup ────────────────────────────────────────
 function! s:CleanWhitespace()
@@ -404,8 +426,10 @@ nnoremap [g <Cmd>call <SID>JumpConflict('prev')<CR>
 " ── Buffer management ─────────────────────────────────────────
 nnoremap <silent> <C-\>      :bdelete!<CR>
 inoremap <silent> <C-\>      <Esc>:bdelete!<CR>
-nnoremap <silent> <C-c>      :bd<CR>
-inoremap <silent> <C-c>      <Esc>:bdelete<CR>
+" <C-c> is intentionally left at its default behaviour (acts like
+" <Esc> in insert/visual/etc). It used to be remapped here to
+" close/delete the buffer, which meant a reflexive Ctrl-C (e.g. to
+" bail out of insert mode) could wipe out your buffer.
 
 nnoremap <silent> <leader>bd :bd<CR>
 nnoremap <silent> <leader>bn :enew<CR>
@@ -472,7 +496,10 @@ function! s:DeleteBufferAndFile()
   endif
 endfunction
 
-nnoremap <silent> <leader>bd :call <SID>DeleteBufferAndFile()<CR>
+" Distinct from the plain-close <leader>bd above — this one
+" removes the file from disk, so it gets its own binding instead
+" of silently overriding <leader>bd.
+nnoremap <silent> <leader>bX :call <SID>DeleteBufferAndFile()<CR>
 
 " ── Delete other buffers (spare pinned ones) ──────────────────
 let g:pinned_buffers = {}
@@ -1036,6 +1063,49 @@ endfunction
 call s:InitMarksSigns()
 
 " ── Snapshot ──────────────────────────────────────────────────
+" Lowercase marks (a-z) are buffer-local, but getpos("'x") always
+" resolves against the *current* buffer — its returned bufnum is
+" only ever non-zero for numbered/uppercase marks. The old version
+" of this function looped over every buffer and called getpos() on
+" each iteration expecting it to reflect that loop's buffer, so it
+" actually re-read the active buffer's marks every time and only
+" ever attributed them correctly when bnr happened to match the
+" buffer that was current when the snapshot ran. getmarklist({buf})
+" queries a specific buffer's local marks directly, so it's used
+" here instead (with a buffer-switching fallback for very old Vim).
+function! s:GetLocalMarksForBuf(bnr)
+  let result = {}
+
+  if exists('*getmarklist')
+    for m in getmarklist(a:bnr)
+      let mark = m.mark[1:]
+      if mark =~# '^[a-z]$'
+        let result[mark] = { 'lnum': m.pos[1], 'col': m.pos[2] }
+      endif
+    endfor
+    return result
+  endif
+
+  " Fallback for Vim builds without getmarklist(): briefly switch
+  " into the buffer to read its marks, then switch back.
+  let l:cur = bufnr('%')
+  if a:bnr != l:cur
+    noautocmd execute 'buffer ' . a:bnr
+  endif
+  for c in range(char2nr('a'), char2nr('z'))
+    let mark = nr2char(c)
+    let pos  = getpos("'" . mark)
+    if pos[1] != 0
+      let result[mark] = { 'lnum': pos[1], 'col': pos[2] }
+    endif
+  endfor
+  if a:bnr != l:cur
+    noautocmd execute 'buffer ' . l:cur
+  endif
+
+  return result
+endfunction
+
 function! s:MarksSnapshot()
   let data = { 'global': {}, 'local': {} }
 
@@ -1054,17 +1124,7 @@ function! s:MarksSnapshot()
     if !buflisted(bnr) || !bufloaded(bnr) | continue | endif
     let fname = fnamemodify(bufname(bnr), ':p')
     if fname ==# '' | continue | endif
-    let buf_marks = {}
-    for c in range(char2nr('a'), char2nr('z'))
-      let mark = nr2char(c)
-      let pos  = getpos("'" . mark)
-      if pos[1] != 0
-        let mark_buf = pos[0] != 0 ? pos[0] : bufnr('%')
-        if mark_buf == bnr
-          let buf_marks[mark] = { 'lnum': pos[1], 'col': pos[2] }
-        endif
-      endif
-    endfor
+    let buf_marks = s:GetLocalMarksForBuf(bnr)
     if !empty(buf_marks)
       let data.local[fname] = buf_marks
     endif
