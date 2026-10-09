@@ -309,6 +309,9 @@ endfunction
 nnoremap <silent> <leader>ww :call <SID>CleanWhitespace()<CR>
 nnoremap <leader>wc :set ff=unix<CR>
 
+" Edit and run an awk filter on the whole buffer (press Enter to run)
+nnoremap <leader>wa :%!awk '{print $1, $2, $3, $4, $5, $6}'
+
 " ── Pasting ───────────────────────────────────────────────────
 " Visual $ goes to last non-blank char (like g_)
 vnoremap $ g_
