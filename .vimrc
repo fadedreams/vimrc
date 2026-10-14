@@ -466,7 +466,9 @@ function! s:ApplyClaude(style) abort
         \ 'spinner': ['fg', 'Label'],
         \ 'header':  ['fg', 'Comment'] }
 
-  let g:colors_name = l:name
+  " Deliberately NOT setting g:colors_name: `syntax on` would try to
+  " re-run `:colorscheme claude`, and there is no colors/claude.vim file.
+  let g:claude_style = l:style
   " let statusline / marks highlight hooks re-apply on top of the theme
   silent! doautocmd <nomodeline> ColorScheme
 endfunction
@@ -950,7 +952,7 @@ nnoremap <silent> <leader>ic :call <SID>ToggleColorcolumn()<CR>
 " falls back to a plain 'background' flip.
 function! s:ToggleBackground()
   let l:next = &background ==# 'dark' ? 'light' : 'dark'
-  if get(g:, 'colors_name', '') =~# '^claude'
+  if exists('g:claude_style')
     call s:ApplyClaude(l:next)
   else
     let &background = l:next
@@ -1749,5 +1751,3 @@ augroup END
 
 " ── Initial load ──────────────────────────────────────────────
 call s:MarksLoad()
-
-
