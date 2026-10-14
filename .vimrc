@@ -1,4 +1,27 @@
 let mapleader = " "
+
+" ── Fold vimrc by section headers ─────────────────────────────
+function! VimrcFold(lnum)
+  let l = getline(a:lnum)
+  if l =~# '^" ──' || (l =~# '^" ═' && getline(a:lnum + 1) =~# '^"  \S')
+    return '>1'
+  endif
+  return '='
+endfunction
+
+function! VimrcFoldText()
+  let n = v:foldend - v:foldstart + 1
+  let t = substitute(getline(v:foldstart), '^" [─═ ]*\|[─═ ]*$', '', 'g')
+  if t ==# '' | let t = substitute(getline(v:foldstart + 1), '^"\s*', '', '') | endif
+  return '▸ ' . t . '  (' . n . ' lines) '
+endfunction
+
+augroup VimrcFold
+  autocmd!
+  autocmd FileType vim setlocal foldmethod=expr foldexpr=VimrcFold(v:lnum)
+        \ foldtext=VimrcFoldText() foldlevel=0
+augroup END
+
 " :PlugInstall manually if auto install did not worked
 " ── Auto-install vim-plug ─────────────────────────────────────
 let s:plug_file = expand('~/.vim/autoload/plug.vim')
@@ -146,10 +169,319 @@ silent! call plug#begin('~/.vim/plugged')
   Plug 'christoomey/vim-tmux-navigator'
 call plug#end()
 
+" ══════════════════════════════════════════════════════════════
+"  Colorscheme: "claude" (dark + light)
+"  Ported from ~/.config/nvim/lua/plugins/colorscheme/claude_theme.lua
+"
+"  :ClaudeDark / :ClaudeLight   switch variant
+"  <leader>uc                   toggle dark <-> light
+"
+"  Vim has no treesitter, so the @capture groups are dropped and
+"  the classic syntax groups (plus common language groups) carry
+"  the colors instead.
+" ══════════════════════════════════════════════════════════════
+
+let s:claude_palettes = {
+  \ 'dark': {
+  \   'bg':           '#262624',
+  \   'bg_alt':       '#30302E',
+  \   'bg_float':     '#1E1E1C',
+  \   'bg_select':    '#3D3B36',
+  \   'bg_cursor':    '#40403C',
+  \   'fg':           '#E8E6DC',
+  \   'fg_dim':       '#B5B3A8',
+  \   'fg_dimmer':    '#8A8778',
+  \   'border':       '#4A4844',
+  \   'orange':       '#D97757',
+  \   'orange_dim':   '#ec7e7e',
+  \   'kraft':        '#D4A27F',
+  \   'sage':         '#87A08A',
+  \   'clay':         '#C1654A',
+  \   'gold':         '#FBAD60',
+  \   'slate_blue':   '#70B8FF',
+  \   'lavender':     '#CC7BF4',
+  \   'rose':         '#F47B85',
+  \   'comment_gray': '#818898',
+  \   'red':          '#C1654A',
+  \   'green':        '#98C379',
+  \   'yellow':       '#FBAD60',
+  \   'blue':         '#70B8FF',
+  \   'purple':       '#CC7BF4',
+  \   'cyan':         '#7FB0AC',
+  \ },
+  \ 'light': {
+  \   'bg':           '#FAF9F5',
+  \   'bg_alt':       '#F0EEE6',
+  \   'bg_float':     '#FFFFFF',
+  \   'bg_select':    '#E8E1D3',
+  \   'bg_cursor':    '#EDE9DD',
+  \   'fg':           '#2B2A27',
+  \   'fg_dim':       '#6B6860',
+  \   'fg_dimmer':    '#8F8C81',
+  \   'border':       '#DDD8CB',
+  \   'orange':       '#CC785C',
+  \   'orange_dim':   '#B35F42',
+  \   'kraft':        '#A8754A',
+  \   'sage':         '#5C7A5E',
+  \   'clay':         '#AE5137',
+  \   'gold':         '#9C7A26',
+  \   'slate_blue':   '#3E6E96',
+  \   'lavender':     '#7A5F99',
+  \   'rose':         '#B44D5C',
+  \   'comment_gray': '#8F8C81',
+  \   'red':          '#AE5137',
+  \   'green':        '#98C379',
+  \   'yellow':       '#9C7A26',
+  \   'blue':         '#3E6E96',
+  \   'purple':       '#7A5F99',
+  \   'cyan':         '#3C7A75',
+  \ },
+  \ }
+
+" s:H(group, fg, bg [, attrs [, sp]])  — '' means NONE
+function! s:H(group, fg, bg, ...) abort
+  let l:attr = a:0 >= 1 && a:1 !=# '' ? a:1 : 'NONE'
+  let l:cmd  = 'hi ' . a:group
+        \ . ' guifg=' . (a:fg ==# '' ? 'NONE' : a:fg)
+        \ . ' guibg=' . (a:bg ==# '' ? 'NONE' : a:bg)
+        \ . ' gui='   . l:attr
+        \ . ' cterm=' . substitute(l:attr, 'undercurl', 'underline', 'g')
+  if a:0 >= 2 && a:2 !=# ''
+    let l:cmd .= ' guisp=' . a:2
+  endif
+  execute l:cmd
+endfunction
+
+function! s:L(from, to) abort
+  execute 'hi! link ' . a:from . ' ' . a:to
+endfunction
+
+function! s:ApplyClaude(style) abort
+  let l:style = has_key(s:claude_palettes, a:style) ? a:style : 'dark'
+  let l:name  = 'claude' . (l:style ==# 'light' ? '-light' : '')
+  let p = s:claude_palettes[l:style]
+
+  " unlet first so changing &background can't re-source a colorscheme
+  if exists('g:colors_name') | unlet g:colors_name | endif
+  hi clear
+  if exists('syntax_on') | syntax reset | endif
+
+  set termguicolors
+  let &background = l:style
+
+  " ── Editor UI ───────────────────────────────────────────────
+  call s:H('Normal',       p.fg, p.bg)
+  call s:H('NormalNC',     p.fg, p.bg)
+  call s:H('Terminal',     p.fg, p.bg)
+  call s:H('Cursor',       p.bg, p.fg_dim)
+  call s:H('lCursor',      p.bg, p.fg_dim)
+  call s:H('CursorIM',     p.bg, p.fg_dim)
+  call s:H('CursorLine',   '', p.bg_alt)
+  call s:H('CursorLineNr', p.fg_dim, '', 'bold')
+  call s:H('CursorColumn', '', p.bg_alt)
+  call s:H('ColorColumn',  '', p.bg_alt)
+
+  call s:H('LineNr',       p.fg_dimmer, '')
+  call s:H('LineNrAbove',  p.fg_dimmer, '')
+  call s:H('LineNrBelow',  p.fg_dimmer, '')
+  call s:H('SignColumn',   p.fg_dimmer, p.bg)
+  call s:H('FoldColumn',   p.fg_dimmer, p.bg)
+  call s:H('Folded',       p.fg_dim, p.bg_alt, 'italic')
+
+  call s:H('VertSplit',    p.border, p.bg)
+  call s:H('WinSeparator', p.border, p.bg)
+  call s:H('Pmenu',        p.fg, p.bg_float)
+  call s:H('PmenuSel',     p.bg, p.blue, 'bold')
+  call s:H('PmenuSbar',    '', p.bg_alt)
+  call s:H('PmenuThumb',   '', p.fg_dimmer)
+  call s:H('PmenuKind',    p.slate_blue, p.bg_float)
+  call s:H('PmenuExtra',   p.fg_dimmer, p.bg_float)
+  call s:H('ToolbarLine',  p.fg_dim, p.bg_alt)
+  call s:H('ToolbarButton',p.fg, p.bg_select, 'bold')
+
+  call s:H('Visual',       '', p.bg_select)
+  call s:H('VisualNOS',    '', p.bg_select)
+  call s:H('Search',       p.bg, p.gold)
+  call s:H('IncSearch',    p.bg, p.blue)
+  call s:H('CurSearch',    p.bg, p.blue)
+
+  " StatusLine / SL* are re-set by the custom statusline section
+  call s:H('StatusLine',     p.fg, p.bg, 'bold')
+  call s:H('StatusLineNC',   p.fg_dimmer, p.bg)
+  call s:H('StatusLineTerm', p.fg, p.bg, 'bold')
+  call s:H('StatusLineTermNC', p.fg_dimmer, p.bg)
+  call s:H('TabLine',      p.fg_dim, p.bg_alt)
+  call s:H('TabLineSel',   p.blue, p.bg, 'bold')
+  call s:H('TabLineFill',  '', p.bg_alt)
+
+  call s:H('MatchParen',   p.blue, '', 'bold,underline')
+  call s:H('Directory',    p.slate_blue, '')
+  call s:H('Title',        p.blue, '', 'bold')
+  call s:H('NonText',      p.border, '')
+  call s:H('Whitespace',   p.border, '')
+  call s:H('SpecialKey',   p.border, '')
+  call s:H('EndOfBuffer',  p.bg, '')
+  call s:H('Conceal',      p.fg_dimmer, '')
+  call s:H('QuickFixLine', '', p.bg_select, 'bold')
+  call s:H('WildMenu',     p.bg, p.blue, 'bold')
+
+  " ── Messages / prompts ──────────────────────────────────────
+  call s:H('ErrorMsg',     p.clay, '', 'bold')
+  call s:H('WarningMsg',   p.gold, '', 'bold')
+  call s:H('ModeMsg',      p.fg_dim, '')
+  call s:H('MoreMsg',      p.sage, '')
+  call s:H('Question',     p.blue, '')
+
+  " ── Diff ────────────────────────────────────────────────────
+  call s:H('DiffAdd',      p.sage, p.bg_alt)
+  call s:H('DiffChange',   p.gold, p.bg_alt)
+  call s:H('DiffDelete',   p.clay, p.bg_alt)
+  call s:H('DiffText',     p.blue, p.bg_select, 'bold')
+
+  " ── Spell ───────────────────────────────────────────────────
+  call s:H('SpellBad',     '', '', 'undercurl', p.clay)
+  call s:H('SpellCap',     '', '', 'undercurl', p.gold)
+  call s:H('SpellLocal',   '', '', 'undercurl', p.slate_blue)
+  call s:H('SpellRare',    '', '', 'undercurl', p.lavender)
+
+  " ── Base syntax ─────────────────────────────────────────────
+  call s:H('Comment',      p.comment_gray, '', 'italic')
+  call s:H('Constant',     p.gold, '')
+  call s:H('String',       p.sage, '')
+  call s:H('Character',    p.sage, '')
+  call s:H('Number',       p.cyan, '')
+  call s:H('Boolean',      p.cyan, '')
+  call s:H('Float',        p.cyan, '')
+  call s:H('Identifier',   p.fg, '')
+  call s:H('Function',     p.slate_blue, '')
+  call s:H('Statement',    p.lavender, '')
+  call s:H('Conditional',  p.lavender, '')
+  call s:H('Repeat',       p.lavender, '')
+  call s:H('Label',        p.orange, '')
+  call s:H('Operator',     p.kraft, '')
+  call s:H('Keyword',      p.lavender, '')
+  call s:H('Exception',    p.clay, '', 'bold')
+  call s:H('PreProc',      p.lavender, '')
+  call s:H('Include',      p.lavender, '')
+  call s:H('Define',       p.lavender, '')
+  call s:H('Macro',        p.lavender, '')
+  call s:H('PreCondit',    p.lavender, '')
+  call s:H('Type',         p.kraft, '', 'bold')
+  call s:H('StorageClass', p.kraft, '')
+  call s:H('Structure',    p.kraft, '')
+  call s:H('Typedef',      p.kraft, '')
+  call s:H('Special',      p.orange, '')
+  call s:H('SpecialChar',  p.orange, '')
+  call s:H('Tag',          p.orange, '')
+  call s:H('Delimiter',    p.fg_dim, '')
+  call s:H('SpecialComment', p.comment_gray, '', 'italic')
+  call s:H('Debug',        p.clay, '')
+  call s:H('Underlined',   p.slate_blue, '', 'underline')
+  call s:H('Ignore',       p.fg_dimmer, '')
+  call s:H('Error',        p.clay, '', 'bold')
+  call s:H('Todo',         p.bg, p.gold, 'bold')
+
+  " ── Stand-ins for the treesitter extras (Vim syntax groups) ─
+  " vim / python / js / sh / html / css / markdown / json
+  call s:H('vimVar',         p.fg, '')
+  call s:H('vimFuncVar',     p.gold, '')
+  call s:H('vimOption',      p.rose, '')
+  call s:H('vimHiGroup',     p.rose, '')
+  call s:H('pythonBuiltin',  p.slate_blue, '')
+  call s:H('pythonDecorator',p.lavender, '')
+  call s:H('pythonSelf',     p.orange, '', 'italic')
+  call s:H('jsThis',         p.orange, '', 'italic')
+  call s:H('javaScriptValue',p.cyan, '')
+  call s:H('shVariable',     p.rose, '')
+  call s:H('shDerefSimple',  p.rose, '')
+  call s:H('shQuote',        p.sage, '')
+  call s:H('htmlTag',        p.fg_dim, '')
+  call s:H('htmlEndTag',     p.fg_dim, '')
+  call s:H('htmlTagName',    p.orange, '')
+  call s:H('htmlArg',        p.kraft, '', 'italic')
+  call s:H('htmlH1',         p.orange, '', 'bold')
+  call s:H('cssProp',        p.rose, '')
+  call s:H('cssClassName',   p.kraft, '')
+  call s:H('cssIdentifier',  p.kraft, '')
+  call s:H('cssTagName',     p.orange, '')
+  call s:H('jsonKeyword',    p.rose, '')
+  call s:H('jsonString',     p.sage, '')
+  call s:H('markdownH1',     p.orange, '', 'bold')
+  call s:H('markdownH2',     p.orange, '', 'bold')
+  call s:H('markdownH3',     p.orange, '', 'bold')
+  call s:H('markdownHeadingDelimiter', p.orange, '', 'bold')
+  call s:H('markdownCode',   p.sage, '')
+  call s:H('markdownCodeBlock', p.sage, '')
+  call s:H('markdownUrl',    p.slate_blue, '', 'underline')
+  call s:H('markdownLinkText', p.slate_blue, '', 'underline')
+  call s:H('markdownListMarker', p.orange, '')
+  call s:H('markdownBold',   p.fg, '', 'bold')
+  call s:H('markdownItalic', p.fg, '', 'italic')
+
+  " ── Git / diff syntax (fugitive, git commit, .diff) ─────────
+  call s:H('diffAdded',    p.sage, '')
+  call s:H('diffRemoved',  p.clay, '')
+  call s:H('diffChanged',  p.gold, '')
+  call s:H('diffFile',     p.blue, '', 'bold')
+  call s:H('diffNewFile',  p.blue, '', 'bold')
+  call s:H('diffOldFile',  p.blue, '', 'bold')
+  call s:H('diffLine',     p.slate_blue, '')
+  call s:H('diffIndexLine',p.fg_dimmer, '')
+  call s:H('gitcommitSummary',  p.fg, '')
+  call s:H('gitcommitComment',  p.comment_gray, '', 'italic')
+  call s:H('gitcommitBranch',   p.blue, '', 'bold')
+
+  " ── Plugin: netrw / undotree / rainbow-friendly ─────────────
+  call s:H('netrwDir',     p.blue, '', 'bold')
+  call s:H('netrwClassify',p.fg_dimmer, '')
+  call s:H('netrwTreeBar', p.border, '')
+  call s:H('netrwExe',     p.sage, '')
+  call s:H('netrwSymLink', p.cyan, '')
+  call s:H('UndotreeSavedBig',   p.orange, '', 'bold')
+  call s:H('UndotreeSavedSmall', p.sage, '')
+  call s:H('UndotreeCurrent',    p.blue, '', 'bold')
+  call s:H('UndotreeNode',       p.blue, '')
+  call s:H('UndotreeSeq',        p.fg_dimmer, '')
+  call s:H('UndotreeTimeStamp',  p.fg_dimmer, '')
+  call s:H('UndotreeHead',       p.sage, '', 'bold')
+
+  " ── Terminal ANSI colors (Vim :terminal) ────────────────────
+  let g:terminal_ansi_colors = [
+        \ p.bg, p.red, p.green, p.yellow, p.blue, p.purple, p.cyan, p.fg,
+        \ p.fg_dimmer, p.red, p.green, p.yellow, p.blue, p.purple, p.cyan, p.fg ]
+
+  " ── fzf.vim: follow the theme instead of its defaults ──────
+  let g:fzf_colors = {
+        \ 'fg':      ['fg', 'Normal'],
+        \ 'bg':      ['bg', 'Normal'],
+        \ 'hl':      ['fg', 'Special'],
+        \ 'fg+':     ['fg', 'CursorLine', 'CursorColumn', 'Normal'],
+        \ 'bg+':     ['bg', 'Visual'],
+        \ 'hl+':     ['fg', 'Statement'],
+        \ 'info':    ['fg', 'PreProc'],
+        \ 'border':  ['fg', 'Ignore'],
+        \ 'prompt':  ['fg', 'Conditional'],
+        \ 'pointer': ['fg', 'Exception'],
+        \ 'marker':  ['fg', 'Keyword'],
+        \ 'spinner': ['fg', 'Label'],
+        \ 'header':  ['fg', 'Comment'] }
+
+  let g:colors_name = l:name
+  " let statusline / marks highlight hooks re-apply on top of the theme
+  silent! doautocmd <nomodeline> ColorScheme
+endfunction
+
+command! -bar ClaudeDark  call s:ApplyClaude('dark')
+command! -bar ClaudeLight call s:ApplyClaude('light')
+
 " ── Colorscheme ───────────────────────────────────────────────
-silent! colorscheme habamax
-if get(g:, 'colors_name', '') !=# 'habamax'
-  colorscheme desert
+if has('termguicolors')
+  call s:ApplyClaude('dark')
+else
+  silent! colorscheme habamax
+  if get(g:, 'colors_name', '') !=# 'habamax'
+    colorscheme desert
+  endif
 endif
 
 " let g:tokyonight_style  = 'night'
@@ -613,11 +945,15 @@ function! s:ToggleColorcolumn()
 endfunction
 nnoremap <silent> <leader>ic :call <SID>ToggleColorcolumn()<CR>
 
+" Toggle dark/light. When the claude theme is active this swaps
+" between the claude dark and claude-light palettes; otherwise it
+" falls back to a plain 'background' flip.
 function! s:ToggleBackground()
-  if &background ==# 'dark'
-    set background=light
+  let l:next = &background ==# 'dark' ? 'light' : 'dark'
+  if get(g:, 'colors_name', '') =~# '^claude'
+    call s:ApplyClaude(l:next)
   else
-    set background=dark
+    let &background = l:next
   endif
 endfunction
 nnoremap <silent> <leader>uc :call <SID>ToggleBackground()<CR>
@@ -1413,3 +1749,5 @@ augroup END
 
 " ── Initial load ──────────────────────────────────────────────
 call s:MarksLoad()
+
+
