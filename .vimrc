@@ -1,5 +1,5 @@
 " ══════════════════════════════════════════════════════════════
-"  .vimrc   (save as ~/.vimrc ; colorscheme at ~/.vim/colors/claude.vim)
+"  .vimrc   (save as ~/.vimrc)
 " ══════════════════════════════════════════════════════════════
 let mapleader = " "
 
@@ -154,20 +154,18 @@ silent! call plug#begin('~/.vim/plugged')
   Plug 'christoomey/vim-tmux-navigator'
 call plug#end()
 
-" ── Colorscheme (claude, dark only) ───────────────────────────
-" File lives at ~/.vim/colors/claude.vim. It forces background=dark and
-" exposes its palette as g:claude_palette for the sections below.
+" ── Colorscheme ───────────────────────────────────────────────
 set termguicolors
 set background=dark
-silent! colorscheme claude
-if get(g:, 'colors_name', '') !=# 'claude'
+silent! colorscheme habamax
+if get(g:, 'colors_name', '') !=# 'habamax'
   colorscheme desert
 endif
 
 " ── Rainbow Parentheses ───────────────────────────────────────
 let g:rainbow_active = 1              " 1 = always on  |  :RainbowToggle to flip
 let g:rainbow_conf = {
-  \   'guifgs': ['#D97757', '#FBAD60', '#98C379', '#7FB0AC', '#70B8FF', '#CC7BF4'],
+  \   'guifgs': ['#e06c75', '#e5c07b', '#98c379', '#56b6c2', '#61afef', '#c678dd'],
   \   'ctermfgs': ['lightblue', 'lightyellow', 'lightcyan', 'lightmagenta'],
   \ }
 
@@ -616,7 +614,14 @@ function! s:ToggleColorcolumn()
 endfunction
 nnoremap <silent> <leader>ic :call <SID>ToggleColorcolumn()<CR>
 
-" (background toggle removed — claude theme is dark only)
+function! s:ToggleBackground()
+  if &background ==# 'dark'
+    set background=light
+  else
+    set background=dark
+  endif
+endfunction
+nnoremap <silent> <leader>uc :call <SID>ToggleBackground()<CR>
 
 function! s:ToggleFoldcolumn()
   if &foldcolumn == 0
@@ -728,7 +733,7 @@ let g:AutoPairsShortcutFastWrap = '<M-e>'
 
 
 " ── FZF ───────────────────────────────────────────────────────
-" Make fzf popups inherit the claude theme
+" Make fzf popups inherit the active colorscheme
 let g:fzf_colors = {
   \ 'fg':      ['fg', 'Normal'],
   \ 'bg':      ['bg', 'Normal'],
@@ -856,34 +861,26 @@ nnoremap <silent> <leader>3 :call <SID>GrepUnderCursor3()<CR>
 
 
 " ══════════════════════════════════════════════════════════════
-"  Custom Statusline  (colors come from the claude palette)
+"  Custom Statusline
 " ══════════════════════════════════════════════════════════════
 
 function! s:SetStatuslineHls()
-    " Fallback values = claude dark palette, in case the colorscheme
-    " hasn't exported g:claude_palette yet.
-    let c = extend({
-        \ 'blue': '#70B8FF', 'cyan': '#7FB0AC', 'lavender': '#CC7BF4',
-        \ 'clay': '#C1654A', 'gold': '#FBAD60', 'sage': '#87A08A',
-        \ 'orange': '#D97757', 'fg': '#E8E6DC', 'fg_dim': '#B5B3A8',
-        \ 'fg_dimmer': '#8A8778' }, get(g:, 'claude_palette', {}))
-
     hi StatusLine   guifg=NONE guibg=NONE cterm=NONE
     hi StatusLineNC guifg=NONE guibg=NONE cterm=NONE
-    execute 'hi SLAccent        guifg=' . c.blue      . ' guibg=NONE cterm=NONE'
-    execute 'hi SLInsertAccent  guifg=' . c.cyan      . ' guibg=NONE cterm=NONE'
-    execute 'hi SLVisualAccent  guifg=' . c.lavender  . ' guibg=NONE cterm=NONE'
-    execute 'hi SLReplaceAccent guifg=' . c.clay      . ' guibg=NONE cterm=NONE'
-    execute 'hi SLCmdAccent     guifg=' . c.gold      . ' guibg=NONE cterm=NONE'
-    execute 'hi SLTermAccent    guifg=' . c.fg_dimmer . ' guibg=NONE cterm=NONE'
-    execute 'hi SLText          guifg=' . c.fg        . ' guibg=NONE cterm=NONE'
-    execute 'hi SLExtra         guifg=' . c.fg_dim    . ' guibg=NONE cterm=NONE'
-    execute 'hi SLModified      guifg=' . c.orange    . ' guibg=NONE cterm=NONE'
-    execute 'hi SLGitAdd        guifg=' . c.sage      . ' guibg=NONE cterm=NONE'
-    execute 'hi SLGitChange     guifg=' . c.gold      . ' guibg=NONE cterm=NONE'
-    execute 'hi SLGitDelete     guifg=' . c.clay      . ' guibg=NONE cterm=NONE'
-    execute 'hi SLError         guifg=' . c.clay      . ' guibg=NONE cterm=NONE'
-    execute 'hi SLWarn          guifg=' . c.gold      . ' guibg=NONE cterm=NONE'
+    hi SLAccent        guifg=#7aa2f7 guibg=NONE cterm=NONE
+    hi SLInsertAccent  guifg=#0db9d7 guibg=NONE cterm=NONE
+    hi SLVisualAccent  guifg=#a487d8 guibg=NONE cterm=NONE
+    hi SLReplaceAccent guifg=#d94a4a guibg=NONE cterm=NONE
+    hi SLCmdAccent     guifg=#e0af68 guibg=NONE cterm=NONE
+    hi SLTermAccent    guifg=#565f89 guibg=NONE cterm=NONE
+    hi SLText          guifg=#c0caf5 guibg=NONE cterm=NONE
+    hi SLExtra         guifg=#a9b1d6 guibg=NONE cterm=NONE
+    hi SLModified      guifg=#c0caf5 guibg=NONE cterm=NONE
+    hi SLGitAdd        guifg=#1abc9c guibg=NONE cterm=NONE
+    hi SLGitChange     guifg=#e0af68 guibg=NONE cterm=NONE
+    hi SLGitDelete     guifg=#db4b4b guibg=NONE cterm=NONE
+    hi SLError         guifg=#db4b4b guibg=NONE cterm=NONE
+    hi SLWarn          guifg=#e0af68 guibg=NONE cterm=NONE
 endfunction
 
 call s:SetStatuslineHls()
@@ -1059,8 +1056,8 @@ let s:marks_save_path  = expand('~/.vim/marks.json')
 let s:marks_buf        = -1
 let s:marks_win        = -1
 let s:last_closed_buf  = ''
-" Visible on the dark claude background (was #004E2E / #004E89)
-let g:marks_colors     = { 'global': '#FBAD60', 'local': '#70B8FF' }
+" Bright enough to read on habamax's dark background
+let g:marks_colors     = { 'global': '#e5c07b', 'local': '#61afef' }
 
 " ── Highlights ────────────────────────────────────────────────
 function! s:InitMarksHighlights()
@@ -1434,4 +1431,3 @@ augroup END
 
 " ── Initial load ──────────────────────────────────────────────
 call s:MarksLoad()
-
