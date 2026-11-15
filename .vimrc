@@ -152,6 +152,8 @@ silent! call plug#begin('~/.vim/plugged')
   Plug 'junegunn/fzf', { 'do': { -> fzf#install() } }
   Plug 'junegunn/fzf.vim'
   Plug 'christoomey/vim-tmux-navigator'
+  Plug 'iamcco/markdown-preview.nvim', { 'do': { -> mkdp#util#install() }, 'for': ['markdown', 'vim-plug'] }
+                                    " live markdown preview in browser (<leader>mp)
 call plug#end()
 
 " ── Colorscheme ───────────────────────────────────────────────
@@ -736,6 +738,27 @@ let g:undotree_SplitWidth         = 30
 " ── Auto-pairs ────────────────────────────────────────────────
 let g:AutoPairsShortcutToggle   = ''
 let g:AutoPairsShortcutFastWrap = '<M-e>'
+
+
+" ── Markdown Preview ──────────────────────────────────────────
+let g:mkdp_auto_start       = 0     " don't open the browser on every .md file
+let g:mkdp_auto_close       = 1     " close the preview when you leave the buffer
+let g:mkdp_echo_preview_url = 1     " print the URL (handy over SSH/Docker)
+let g:mkdp_filetypes        = ['markdown']
+
+" Uncomment for remote/container use (webtop, SSH), then open the
+" printed URL yourself. In Docker, publish the port too.
+" let g:mkdp_open_to_the_world = 1
+" let g:mkdp_port              = '8090'
+
+" Uncomment to force a specific browser
+" let g:mkdp_browser = 'firefox'
+
+" Only for .md buffers:  <leader>mp toggles the preview
+augroup MarkdownPreviewMaps
+  autocmd!
+  autocmd FileType markdown nnoremap <buffer> <silent> <leader>mp :MarkdownPreviewToggle<CR>
+augroup END
 
 
 " ── FZF ───────────────────────────────────────────────────────
@@ -1437,3 +1460,4 @@ augroup END
 
 " ── Initial load ──────────────────────────────────────────────
 call s:MarksLoad()
+
