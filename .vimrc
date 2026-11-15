@@ -674,8 +674,14 @@ filetype plugin indent on
 "  File Browser  (mirrors telescope-file-browser)
 " ══════════════════════════════════════════════════════════════
 
-let g:netrw_banner    = 0
-let g:netrw_liststyle = 3
+let g:netrw_liststyle = 0
+let g:netrw_localcopycmd       = 'cp'
+let g:netrw_localcopycmdopt    = ''
+let g:netrw_localcopydircmd    = 'cp'
+let g:netrw_localcopydircmdopt = '-r'
+
+let g:netrw_banner    = 1
+let g:netrw_liststyle = 0
 let g:netrw_winsize   = 30
 let g:netrw_hide      = 0
 let g:netrw_preview   = 1
