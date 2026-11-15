@@ -152,8 +152,6 @@ silent! call plug#begin('~/.vim/plugged')
   Plug 'junegunn/fzf', { 'do': { -> fzf#install() } }
   Plug 'junegunn/fzf.vim'
   Plug 'christoomey/vim-tmux-navigator'
-  Plug 'iamcco/markdown-preview.nvim', { 'do': { -> mkdp#util#install() }, 'for': ['markdown', 'vim-plug'] }
-                                    " live markdown preview in browser (<leader>mp)
 call plug#end()
 
 " ── Colorscheme ───────────────────────────────────────────────
@@ -740,24 +738,90 @@ let g:AutoPairsShortcutToggle   = ''
 let g:AutoPairsShortcutFastWrap = '<M-e>'
 
 
-" ── Markdown Preview ──────────────────────────────────────────
-let g:mkdp_auto_start       = 0     " don't open the browser on every .md file
-let g:mkdp_auto_close       = 1     " close the preview when you leave the buffer
-let g:mkdp_echo_preview_url = 1     " print the URL (handy over SSH/Docker)
-let g:mkdp_filetypes        = ['markdown']
+" ── Markdown Preview (pure Vim, no external tools) ────────────
+" <leader>um toggles "preview mode" for the current markdown buffer:
+"   - hides the markup (#, **, *, `, fences, [text](url)), bullets -> •
+"   - word-wraps, hides line numbers, makes the buffer read-only
+" Press <leader>um again to go back to editing. One buffer, one window,
+" no splits, no browser, nothing to install. Live: edits show instantly.
 
-" Uncomment for remote/container use (webtop, SSH), then open the
-" printed URL yourself. In Docker, publish the port too.
-" let g:mkdp_open_to_the_world = 1
-" let g:mkdp_port              = '8090'
+function! s:MdHighlights()
+  hi mdpvBold     gui=bold      cterm=bold
+  hi mdpvItalic   gui=italic    cterm=italic
+  hi mdpvCode     guifg=#e5c07b ctermfg=180
+  hi mdpvFence    guifg=#e5c07b ctermfg=180
+  hi mdpvLinkText guifg=#61afef ctermfg=75 gui=underline cterm=underline
+  hi link mdpvMark Conceal
+endfunction
 
-" Uncomment to force a specific browser
-" let g:mkdp_browser = 'firefox'
+function! s:MdSyntax()
+  " Order matters: later rules win, so bold is defined after italic.
+  syntax region mdpvItalic matchgroup=mdpvMark start=/\*\ze[^* \t]/ end=/[^* \t]\zs\*/ oneline concealends
+  syntax region mdpvBold   matchgroup=mdpvMark start=/\*\*\ze\S/   end=/\S\zs\*\*/   oneline concealends
+  syntax region mdpvCode   matchgroup=mdpvMark start=/`/ end=/`/ oneline concealends
 
-" Only for .md buffers:  <leader>mp toggles the preview
-augroup MarkdownPreviewMaps
+  " Fenced code blocks: hide the ``` lines, colour the body
+  syntax region mdpvFence matchgroup=mdpvMark start=/^\s*```.*$/ end=/^\s*```\s*$/ concealends
+
+  " [text](url): show only the underlined text
+  syntax region mdpvLinkText matchgroup=mdpvMark start=/\[/ end=/\]\ze(/ oneline concealends
+  syntax match  mdpvLinkUrl  /\]\@<=([^)]*)/ conceal
+
+  " Heading markers and bullets
+  syntax match mdpvHeadMark /^#\+\s\+/ conceal containedin=markdownH1,markdownH2,markdownH3,markdownH4,markdownH5,markdownH6
+  syntax match mdpvBullet   /^\s*\zs[-*+]\ze\s\+\S/ conceal cchar=• containedin=markdownListMarker
+endfunction
+
+function! s:MdPreviewOn()
+  let w:md_saved = {
+        \ 'cole': &l:conceallevel, 'cocu': &l:concealcursor,
+        \ 'wrap': &l:wrap,         'lbr':  &l:linebreak,
+        \ 'nu':   &l:number,       'rnu':  &l:relativenumber,
+        \ 'sc':   &l:signcolumn }
+  let b:md_saved_ma = &l:modifiable
+  setlocal conceallevel=2 concealcursor=nvic
+  setlocal wrap linebreak nonumber norelativenumber signcolumn=no
+  setlocal nomodifiable
+  let b:md_preview = 1
+  echo '[md] preview ON  (<leader>um to edit)'
+endfunction
+
+function! s:MdPreviewOff()
+  if exists('w:md_saved')
+    let &l:conceallevel    = w:md_saved.cole
+    let &l:concealcursor   = w:md_saved.cocu
+    let &l:wrap            = w:md_saved.wrap
+    let &l:linebreak       = w:md_saved.lbr
+    let &l:number          = w:md_saved.nu
+    let &l:relativenumber  = w:md_saved.rnu
+    let &l:signcolumn      = w:md_saved.sc
+    unlet w:md_saved
+  else
+    setlocal conceallevel=0
+  endif
+  let &l:modifiable = get(b:, 'md_saved_ma', 1)
+  let b:md_preview = 0
+  echo '[md] preview OFF'
+endfunction
+
+function! s:MdPreviewToggle()
+  if &filetype !=# 'markdown'
+    echo '[md] not a markdown buffer'
+    return
+  endif
+  if get(b:, 'md_preview', 0)
+    call s:MdPreviewOff()
+  else
+    call s:MdPreviewOn()
+  endif
+endfunction
+
+call s:MdHighlights()
+augroup MarkdownPreview
   autocmd!
-  autocmd FileType markdown nnoremap <buffer> <silent> <leader>mp :MarkdownPreviewToggle<CR>
+  autocmd ColorScheme * call s:MdHighlights()
+  autocmd Syntax markdown call s:MdSyntax()
+  autocmd FileType markdown nnoremap <buffer> <silent> <leader>um :call <SID>MdPreviewToggle()<CR>
 augroup END
 
 
