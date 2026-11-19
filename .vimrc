@@ -135,24 +135,33 @@ call s:CheckFzfDeps()
 " ══════════════════════════════════════════════════════════════
 
 " ── Plugins (vim-plug) ────────────────────────────────────────
-silent! call plug#begin('~/.vim/plugged')
-  Plug 'tpope/vim-commentary'       " gcc = toggle line comment, gc = comment motion
-  Plug 'tpope/vim-surround'         " cs\"' / ds( / ysiw[ — surround text objects
-  Plug 'tpope/vim-repeat'           " makes . work with surround, commentary, etc.
-  Plug 'tpope/vim-eunuch'           " file ops on current buffer:
-                                    "   :Rename newname.js
-                                    "   :Move ../other/path.js   (change dir + name)
-                                    "   :Copy ../other/copy.js
-                                    "   :Delete                  (deletes file + wipes buffer)
-                                    "   :Mkdir subfolder/nested  (creates intermediate dirs)
-                                    "   :SudoWrite               (save file opened without sudo)
-  Plug 'jiangmiao/auto-pairs'       " auto-close (), [], {}, \"\"
-  Plug 'mbbill/undotree'            " visualise undofile history  (<leader>u)
-  Plug 'luochen1990/rainbow'        " rainbow parentheses/brackets/braces
-  Plug 'junegunn/fzf', { 'do': { -> fzf#install() } }
-  Plug 'junegunn/fzf.vim'
-  Plug 'christoomey/vim-tmux-navigator'
-call plug#end()
+if exists('*plug#begin')
+  call plug#begin('~/.vim/plugged')
+    Plug 'tpope/vim-commentary'
+    Plug 'tpope/vim-surround'
+    Plug 'tpope/vim-repeat'
+    Plug 'tpope/vim-eunuch'
+    Plug 'jiangmiao/auto-pairs'
+    Plug 'mbbill/undotree'
+    Plug 'luochen1990/rainbow'
+    Plug 'junegunn/fzf', { 'do': { -> fzf#install() } }
+    Plug 'junegunn/fzf.vim'
+    Plug 'christoomey/vim-tmux-navigator'
+  call plug#end()
+
+  " Auto-install any plugins that are listed but not on disk
+  augroup AutoPlugInstall
+    autocmd!
+    autocmd VimEnter * ++once
+          \ if !empty(filter(copy(g:plugs), '!isdirectory(v:val.dir)'))
+          \ |   PlugInstall --sync | q | source $MYVIMRC
+          \ | endif
+  augroup END
+else
+  echohl WarningMsg
+  echo '[plug] vim-plug not loaded (is curl installed? check ~/.vim/autoload/plug.vim)'
+  echohl None
+endif
 
 " ── Colorscheme ───────────────────────────────────────────────
 set termguicolors
