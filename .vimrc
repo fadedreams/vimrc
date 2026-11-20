@@ -124,6 +124,8 @@ augroup END
 " ── Plugins (vim-plug) ────────────────────────────────────────
 " No `else` branch on purpose: if vim-plug isn't loaded (no git /
 " no curl) we silently carry on with the plain-Vim config below.
+" NOTE: there must be exactly ONE plug#begin()/plug#end() pair, so the
+" text-object plugins live in this same block.
 if s:plug_ok
   call plug#begin('~/.vim/plugged')
     Plug 'tpope/vim-commentary'
@@ -137,6 +139,15 @@ if s:plug_ok
     Plug 'junegunn/fzf', { 'do': { -> fzf#install() } }
     Plug 'junegunn/fzf.vim'
     Plug 'christoomey/vim-tmux-navigator'
+
+    " Text objects
+    Plug 'kana/vim-textobj-user'                       " base for textobj plugins
+    Plug 'kana/vim-textobj-function'                   " af / if
+    Plug 'haya14busa/vim-textobj-function-syntax'      " syntax-based fallback for many filetypes
+    Plug 'bps/vim-textobj-python'                      " af/if/ac/ic for Python (accurate)
+    Plug 'wellle/targets.vim'                          " aa / ia arguments, plus quotes/brackets
+    Plug 'michaeljsmith/vim-indent-object'             " ai / ii (indent-based)
+    Plug 'AndrewRadev/sideways.vim'                    " swap arguments
   call plug#end()
 
   " Auto-install any plugins that are listed but not on disk
@@ -613,6 +624,427 @@ endfunction
 
 nnoremap <silent> <leader>bi :call <SID>BufferInfo()<CR>
 
+" ── Buffer picker popup ───────────────────────────────────────
+" <C-j> opens a telescope-style picker: prompt (top-left), results
+" (below it) and a preview of the selected buffer (right).
+"   type                      filter buffers (fuzzy)
+"   <Down> <C-n> <C-j>        move the selection down (like j)
+"   <Up>   <C-p> <C-k>        move the selection up   (like k)
+"   <C-l> / <CR>              switch to the selected buffer
+"   <C-x>                     delete the selected buffer (refuses unsaved)
+"   <BS> <C-u> <C-w>          edit the query
+"   <Esc> / <C-c>             close
+" Flags: % current, # alternate, a active (shown), h hidden, + modified.
+" Icons need a Nerd Font (same as your statusline).
+let s:bp_popup  = 0    " prompt popup, owns the key filter
+let s:bp_res    = 0    " results popup
+let s:bp_prev   = 0    " preview popup (recreated on every move)
+let s:bp_extra  = []   " centred title popups
+let s:bp_all    = []
+let s:bp_shown  = []
+let s:bp_idx    = 1
+let s:bp_query  = ''
+let s:bp_loaded = []   " buffers we loaded only for previewing
+let s:bp_geo    = {}
+
+let s:bp_icons = {
+      \ 'typescript': 0xe628, 'ts': 0xe628, 'tsx': 0xe628,
+      \ 'javascript': 0xe60c, 'js': 0xe60c, 'jsx': 0xe60c,
+      \ 'python': 0xe606, 'py': 0xe606,
+      \ 'vim': 0xe62b, 'lua': 0xe620, 'json': 0xe60b,
+      \ 'markdown': 0xe609, 'md': 0xe609,
+      \ 'sh': 0xe795, 'bash': 0xe795, 'zsh': 0xe795,
+      \ 'go': 0xe627, 'rust': 0xe7a8, 'rs': 0xe7a8,
+      \ 'c': 0xe61e, 'h': 0xe61e, 'cpp': 0xe61d, 'hpp': 0xe61d,
+      \ 'html': 0xe60e, 'css': 0xe614,
+      \ 'yaml': 0xe615, 'yml': 0xe615, 'toml': 0xe615,
+      \ 'netrw': 0xe5ff,
+      \ }
+
+function! s:BpHighlights()
+  let l:bg = synIDattr(hlID('Normal'), 'bg#')
+  execute 'hi BpTitle guifg=#7aa2f7 ctermfg=75 gui=bold cterm=bold'
+        \ . (empty(l:bg) ? '' : ' guibg=' . l:bg)
+  hi BpPrompt guifg=#7aa2f7 ctermfg=75 gui=bold cterm=bold
+  hi BpNr     guifg=#1abc9c ctermfg=36
+  hi BpFlag   guifg=#1abc9c ctermfg=36
+  hi BpMark   gui=bold cterm=bold
+  hi BpIcon   guifg=#7aa2f7 ctermfg=75
+  hi BpCursor gui=reverse cterm=reverse
+  hi link BpDir   Comment
+  hi link BpCount Comment
+  for [l:t, l:g] in [['bp_mark', 'BpMark'], ['bp_nr', 'BpNr'],
+        \ ['bp_flag', 'BpFlag'], ['bp_icon', 'BpIcon'], ['bp_dir', 'BpDir'],
+        \ ['bp_prompt', 'BpPrompt'], ['bp_count', 'BpCount'],
+        \ ['bp_cursor', 'BpCursor']]
+    silent! call prop_type_add(l:t, {'highlight': l:g})
+  endfor
+endfunction
+
+function! s:BpIcon(ft, ext)
+  for l:k in [a:ft, a:ext]
+    if l:k !=# '' && has_key(s:bp_icons, l:k)
+      return nr2char(s:bp_icons[l:k])
+    endif
+  endfor
+  return nr2char(0xf15b)
+endfunction
+
+function! s:BpItems()
+  let l:cur   = bufnr('%')
+  let l:alt   = bufnr('#')
+  let l:infos = sort(getbufinfo({'buflisted': 1}), {a, b -> b.lastused - a.lastused})
+  let l:items = []
+  for l:inf in l:infos
+    let l:nr   = l:inf.bufnr
+    let l:name = l:inf.name
+    let l:tail = empty(l:name) ? '[No Name]' : fnamemodify(l:name, ':t')
+    if l:tail ==# '' | let l:tail = fnamemodify(l:name, ':~:.') | endif
+    let l:dir  = empty(l:name) ? '.' : fnamemodify(l:name, ':~:.:h')
+    let l:fl   = l:nr == l:cur ? '%' : (l:nr == l:alt ? '#' : ' ')
+    let l:fl  .= !l:inf.loaded ? ' ' : (empty(l:inf.windows) ? 'h' : 'a')
+    let l:fl  .= l:inf.changed ? '+' : ' '
+    call add(l:items, {
+          \ 'nr':    l:nr,
+          \ 'flags': l:fl,
+          \ 'tail':  l:tail,
+          \ 'dir':   l:dir,
+          \ 'lnum':  l:inf.lnum,
+          \ 'icon':  s:BpIcon(getbufvar(l:nr, '&filetype'), fnamemodify(l:name, ':e')),
+          \ 'text':  empty(l:name) ? l:tail : fnamemodify(l:name, ':~:.'),
+          \ })
+  endfor
+  return l:items
+endfunction
+
+function! s:BpApply()
+  if empty(s:bp_query)
+    let s:bp_shown = copy(s:bp_all)
+  else
+    let l:done = 0
+    if exists('*matchfuzzy')
+      try
+        let s:bp_shown = matchfuzzy(s:bp_all, s:bp_query, {'key': 'text'})
+        let l:done = 1
+      catch
+      endtry
+    endif
+    if !l:done
+      let l:q = tolower(s:bp_query)
+      let s:bp_shown = filter(copy(s:bp_all), 'stridx(tolower(v:val.text), l:q) >= 0')
+    endif
+  endif
+  let s:bp_idx = 1
+endfunction
+
+" Append a string to a popup line and (optionally) give it a highlight.
+" Text-property columns are byte based, hence len().
+function! s:BpAdd(row, str, type)
+  if a:type !=# '' && len(a:str) > 0
+    call add(a:row.props, {'col': len(a:row.text) + 1, 'length': len(a:str), 'type': a:type})
+  endif
+  let a:row.text .= a:str
+endfunction
+
+function! s:BpRows()
+  let l:w = 0
+  for l:it in s:bp_shown
+    let l:w = max([l:w, strdisplaywidth(l:it.tail)])
+  endfor
+  let l:rows = []
+  let l:n = 0
+  for l:it in s:bp_shown
+    let l:n += 1
+    let l:sel = l:n == s:bp_idx
+    let l:row = {'text': '', 'props': []}
+    call s:BpAdd(l:row, l:sel ? '> ' : '  ', l:sel ? 'bp_mark' : '')
+    call s:BpAdd(l:row, printf('%3d', l:it.nr), 'bp_nr')
+    call s:BpAdd(l:row, ' ', '')
+    call s:BpAdd(l:row, l:it.flags, 'bp_flag')
+    call s:BpAdd(l:row, ' ', '')
+    call s:BpAdd(l:row, l:it.icon, 'bp_icon')
+    call s:BpAdd(l:row, ' ', '')
+    call s:BpAdd(l:row, l:it.tail . repeat(' ', l:w - strdisplaywidth(l:it.tail)), '')
+    call s:BpAdd(l:row, '  ', '')
+    call s:BpAdd(l:row, l:it.dir . '/:' . l:it.lnum, 'bp_dir')
+    call add(l:rows, l:row)
+  endfor
+  return l:rows
+endfunction
+
+function! s:BpPromptLine()
+  let l:cw    = s:bp_geo.lw - 4
+  let l:count = len(s:bp_shown) . ' / ' . len(s:bp_all)
+  let l:room  = l:cw - 2 - 1 - strdisplaywidth(l:count) - 1
+  let l:q     = s:bp_query
+  while !empty(l:q) && strdisplaywidth(l:q) > l:room
+    let l:q = strcharpart(l:q, 1)
+  endwhile
+  let l:row = {'text': '', 'props': []}
+  call s:BpAdd(l:row, '> ', 'bp_prompt')
+  call s:BpAdd(l:row, l:q, '')
+  call s:BpAdd(l:row, ' ', 'bp_cursor')
+  let l:pad = l:cw - strdisplaywidth(l:row.text) - strdisplaywidth(l:count)
+  call s:BpAdd(l:row, repeat(' ', max([l:pad, 1])), '')
+  call s:BpAdd(l:row, l:count, 'bp_count')
+  return l:row
+endfunction
+
+function! s:BpPreview()
+  if s:bp_prev
+    silent! call popup_close(s:bp_prev)
+    let s:bp_prev = 0
+  endif
+  if empty(s:bp_shown) | return | endif
+  let l:it = s:bp_shown[s:bp_idx - 1]
+  let l:g  = s:bp_geo
+  let l:opts = {
+        \ 'pos': 'topleft', 'line': l:g.top, 'col': l:g.rcol,
+        \ 'minwidth': l:g.rw - 4, 'maxwidth': l:g.rw - 4,
+        \ 'minheight': l:g.h - 2, 'maxheight': l:g.h - 2,
+        \ 'border': [], 'padding': [0, 1, 0, 1],
+        \ 'borderhighlight': ['Comment'],
+        \ 'borderchars': ['─', '│', '─', '│', '┌', '┐', '┘', '└'],
+        \ 'highlight': 'Normal', 'wrap': 0, 'scrollbar': 0,
+        \ }
+  let l:nr = l:it.nr
+  if !bufloaded(l:nr)
+    let l:f = bufname(l:nr)
+    if l:f ==# '' || getbufvar(l:nr, '&buftype') !=# '' || !filereadable(l:f)
+          \ || getfsize(l:f) > 2 * 1024 * 1024
+      let s:bp_prev = popup_create(['  (no preview)'], l:opts)
+      return
+    endif
+    if index(s:bp_loaded, l:nr) < 0 | call add(s:bp_loaded, l:nr) | endif
+    silent! call bufload(l:nr)
+  endif
+  let s:bp_prev = popup_create(l:nr, l:opts)
+  call win_execute(s:bp_prev, 'call cursor(' . l:it.lnum . ', 1) | normal! zz')
+endfunction
+
+function! s:BpRefresh()
+  call popup_settext(s:bp_popup, [s:BpPromptLine()])
+  if empty(s:bp_shown)
+    let l:msg = '  no matches'
+    call popup_settext(s:bp_res, [{'text': l:msg,
+          \ 'props': [{'col': 1, 'length': len(l:msg), 'type': 'bp_dir'}]}])
+  else
+    call popup_settext(s:bp_res, s:BpRows())
+    call win_execute(s:bp_res, 'call cursor(' . s:bp_idx . ', 1)')
+  endif
+  call s:BpPreview()
+  redraw
+endfunction
+
+function! s:BpMove(delta)
+  let l:n = len(s:bp_shown)
+  if l:n == 0 | return | endif
+  let s:bp_idx = (s:bp_idx - 1 + a:delta + l:n) % l:n + 1
+  call s:BpRefresh()
+endfunction
+
+function! s:BpDelete()
+  if empty(s:bp_shown) | return | endif
+  let l:nr  = s:bp_shown[s:bp_idx - 1].nr
+  let l:old = {}
+  for l:it in s:bp_all | let l:old[l:it.nr] = l:it.flags | endfor
+  silent! call popup_close(s:bp_prev)
+  let s:bp_prev = 0
+  try
+    execute 'silent bdelete ' . l:nr
+  catch
+    echohl WarningMsg
+    echo '[bp] ' . substitute(v:exception, '^Vim\%((\a\+)\)\=:', '', '')
+    echohl None
+    call s:BpPreview()
+    return
+  endtry
+  let s:bp_all = s:BpItems()
+  for l:it in s:bp_all
+    if has_key(l:old, l:it.nr) | let l:it.flags = l:old[l:it.nr] | endif
+  endfor
+  if empty(s:bp_all)
+    call popup_close(s:bp_popup)
+    return
+  endif
+  let l:keep = s:bp_idx
+  call s:BpApply()
+  let s:bp_idx = min([l:keep, max([len(s:bp_shown), 1])])
+  call s:BpRefresh()
+endfunction
+
+" Key handling inside the picker.
+"   <C-j> / <C-n> / <Down>  move selection down (like j)
+"   <C-k> / <C-p> / <Up>    move selection up   (like k)
+" <NL> is the plain LF byte that a terminal sends for Ctrl+j when it is not
+" using an escape-sequence encoding, so both forms are handled.
+function! s:BpFilter(winid, key)
+  if a:key ==# "\<Esc>" || a:key ==# "\<C-c>"
+    call popup_close(a:winid)
+  elseif a:key ==# "\<C-l>" || a:key ==# "\<CR>"
+    if !empty(s:bp_shown)
+      call popup_close(a:winid, s:bp_shown[s:bp_idx - 1].nr)
+    endif
+  elseif a:key ==# "\<C-x>"
+    call s:BpDelete()
+  elseif a:key ==# "\<Down>" || a:key ==# "\<C-n>" || a:key ==# "\<C-j>" || a:key ==# "\<NL>"
+    call s:BpMove(1)
+  elseif a:key ==# "\<Up>" || a:key ==# "\<C-p>" || a:key ==# "\<C-k>"
+    call s:BpMove(-1)
+  elseif a:key ==# "\<BS>" || a:key ==# "\x7f" || a:key ==# "\<C-h>"
+    let s:bp_query = strcharpart(s:bp_query, 0, max([strchars(s:bp_query) - 1, 0]))
+    call s:BpApply() | call s:BpRefresh()
+  elseif a:key ==# "\<C-u>"
+    let s:bp_query = ''
+    call s:BpApply() | call s:BpRefresh()
+  elseif a:key ==# "\<C-w>"
+    let s:bp_query = substitute(s:bp_query, '\s*\S*$', '', '')
+    call s:BpApply() | call s:BpRefresh()
+  elseif a:key[0] !=# "\x80" && a:key !~# '[[:cntrl:]]'
+    let s:bp_query .= a:key
+    call s:BpApply() | call s:BpRefresh()
+  endif
+  " swallow every key so nothing leaks into the buffer behind the popup
+  return 1
+endfunction
+
+function! s:BpCleanup()
+  for l:id in [s:bp_res, s:bp_prev] + s:bp_extra
+    if l:id | silent! call popup_close(l:id) | endif
+  endfor
+  let s:bp_res   = 0
+  let s:bp_prev  = 0
+  let s:bp_extra = []
+endfunction
+
+" Runs after the prompt popup is gone, so switching buffers here is safe.
+function! s:BpDone(winid, result)
+  let s:bp_popup = 0
+  call s:BpCleanup()
+  let l:pick = type(a:result) == v:t_number ? a:result : 0
+  " unload buffers that were only loaded to be previewed
+  for l:nr in s:bp_loaded
+    if l:nr != l:pick && bufloaded(l:nr) && !getbufvar(l:nr, '&modified')
+          \ && empty(win_findbuf(l:nr))
+      silent! execute 'bunload ' . l:nr
+    endif
+  endfor
+  let s:bp_loaded = []
+  if l:pick > 0 && buflisted(l:pick)
+    try
+      execute 'buffer ' . l:pick
+    catch
+      echohl WarningMsg
+      echo '[bp] ' . substitute(v:exception, '^Vim\%((\a\+)\)\=:', '', '')
+      echohl None
+    endtry
+  endif
+endfunction
+
+function! s:BpTitle(text, line, col, w)
+  let l:t = ' ' . a:text . ' '
+  call add(s:bp_extra, popup_create(l:t, {
+        \ 'pos': 'topleft', 'line': a:line,
+        \ 'col': a:col + (a:w - strdisplaywidth(l:t)) / 2,
+        \ 'highlight': 'BpTitle', 'zindex': 200, 'wrap': 0,
+        \ }))
+endfunction
+
+function! s:BpGeometry()
+  " Overall size: tweak these to taste
+  let l:total = min([max([float2nr(&columns * 0.6), 60]), &columns - 4])
+  let l:h     = min([max([float2nr(&lines * 0.5), 12]), &lines - 4])
+
+  " List gets 35% of the width, preview gets the rest
+  let l:lw = max([float2nr(l:total * 0.35), 30])
+  let l:rw = max([l:total - l:lw - 1, 20])
+
+  " Centered both ways (the -2 leaves room for the statusline and cmdline)
+  let l:col = max([(&columns - l:total) / 2, 1])
+  let l:top = max([(&lines - 2 - l:h) / 2, 1])
+  return {'top': l:top, 'col': l:col, 'lw': l:lw, 'rw': l:rw,
+        \ 'rcol': l:col + l:lw + 1, 'h': l:h}
+endfunction
+
+function! s:BpToggle()
+  if !has('popupwin')
+    echo '[bp] this Vim has no popup support'
+    return
+  endif
+  if s:bp_popup && !empty(popup_getpos(s:bp_popup))
+    call popup_close(s:bp_popup)
+    return
+  endif
+  call s:BpHighlights()
+  let s:bp_all = s:BpItems()
+  if empty(s:bp_all)
+    echo '[bp] no listed buffers'
+    return
+  endif
+  let s:bp_query  = ''
+  let s:bp_loaded = []
+  call s:BpApply()
+  " like the telescope look: start on the 2nd entry (the alternate buffer)
+  if len(s:bp_shown) > 1 | let s:bp_idx = 2 | endif
+
+  let s:bp_geo = s:BpGeometry()
+  let l:g = s:bp_geo
+  let l:base = {
+        \ 'pos': 'topleft', 'col': l:g.col,
+        \ 'minwidth': l:g.lw - 4, 'maxwidth': l:g.lw - 4,
+        \ 'border': [], 'padding': [0, 1, 0, 1],
+        \ 'borderhighlight': ['Comment'],
+        \ 'borderchars': ['─', '│', '─', '│', '┌', '┐', '┘', '└'],
+        \ 'highlight': 'Normal', 'wrap': 0, 'scrollbar': 0,
+        \ }
+
+  let s:bp_res = popup_create([''], extend(copy(l:base), {
+        \ 'line': l:g.top + 3,
+        \ 'minheight': l:g.h - 5, 'maxheight': l:g.h - 5,
+        \ 'cursorline': 1,
+        \ }))
+  let s:bp_extra = []
+  call s:BpTitle('Buffers',      l:g.top,     l:g.col,  l:g.lw)
+  call s:BpTitle('Results',      l:g.top + 3, l:g.col,  l:g.lw)
+  call s:BpTitle('Grep Preview', l:g.top,     l:g.rcol, l:g.rw)
+
+  let s:bp_popup = popup_create([''], extend(copy(l:base), {
+        \ 'line': l:g.top,
+        \ 'minheight': 1, 'maxheight': 1,
+        \ 'mapping': 0,
+        \ 'filter': function('s:BpFilter'),
+        \ 'callback': function('s:BpDone'),
+        \ }))
+  call s:BpRefresh()
+endfunction
+
+" vim-tmux-navigator maps <C-j> (pane down) when plugins load, which is
+" after this file is read. Mapping on VimEnter makes ours win.
+"
+" Two mappings on purpose: terminals/tmux with modifyOtherKeys send Ctrl+j
+" as an escape sequence once Vim has seen one (e.g. after Ctrl+l in the
+" popup), after which a plain LF no longer matches <C-j>. <C-j> covers the
+" escape-sequence form and <NL> covers the plain LF byte.
+function! s:MapBufPicker()
+  nnoremap <silent> <C-j> :call <SID>BpToggle()<CR>
+  nnoremap <silent> <NL>  :call <SID>BpToggle()<CR>
+endfunction
+
+" Applied now, on VimEnter, and again on every BufEnter (it's an
+" idempotent, global mapping), so a plugin or a re-sourced vimrc that
+" redefines <C-j> later can't leave it dead.
+call s:MapBufPicker()
+augroup BufPickerMap
+  autocmd!
+  autocmd VimEnter,BufEnter * call s:MapBufPicker()
+augroup END
+
+" Fallbacks that don't depend on the terminal / tmux passing <C-j> through:
+"   :BufPicker  or  <leader>bj
+command! -bar BufPicker  call s:BpToggle()
+command! -bar BuffPicker call s:BpToggle()
+nnoremap <silent> <leader>bj :call <SID>BpToggle()<CR>
+
 " Misc
 nnoremap <C-/> :nohlsearch<CR>:diffupdate<CR>:redraw!<CR>
 nnoremap <C-_> :nohlsearch<CR>:diffupdate<CR>:redraw!<CR>
@@ -1025,6 +1457,269 @@ augroup MarkdownPreview
   autocmd Syntax markdown call s:MdSyntax()
   autocmd FileType markdown nnoremap <buffer> <silent> <leader>um :call <SID>MdPreviewToggle()<CR>
 augroup END
+
+" ══════════════════════════════════════════════════════════════
+"  Structural jumps  (port of lua/config/jumps.lua)
+"    [f ]f  function start / end
+"    [c ]c  class start / end
+"    [i ]i  conditional start / end
+"    [b ]b  block start / end
+"    [l ]l  loop start / end
+" Works in normal and visual mode. Vim has no treesitter, so this
+" uses heuristics: start-line patterns, then the end is found via
+" brace matching, `end`/`fi`/`done` keywords, or indentation.
+" NOTE: this overrides Vim's built-in [c / ]c (diff hunk jumps).
+" ══════════════════════════════════════════════════════════════
+
+" Filetypes whose blocks are closed by keywords (end, fi, endif, ...)
+let s:end_fts = ['ruby', 'eruby', 'lua', 'sh', 'bash', 'zsh', 'vim',
+      \ 'elixir', 'julia', 'crystal', 'matlab', 'fortran']
+
+let s:skip = 'synIDattr(synID(line("."), col("."), 0), "name") =~? "string\\|comment"'
+
+let s:ctl = '\v^\s*%(\}\s*)?%(if|else|elseif|for|foreach|while|switch|catch|do|try|synchronized|with|until|unless|using|lock|finally|return|case)>'
+
+let s:fn_kw = '\v^\s*%(%(export|default|async|pub|public|private|protected|static|final|override|abstract|local|unsafe|extern|inline|const)%(\([^)]*\))?\s+)*%(function!?|def|defp|fn|func|fun|sub|proc)>'
+
+let s:pat = {
+      \ 'class': ['\v^\s*%(%(export|default|abstract|public|private|protected|final|static|pub|sealed|data|open|case|partial)%(\([^)]*\))?\s+)*%(class|struct|impl|interface|object|trait|module|enum|namespace)>'],
+      \ 'conditional': ['\v^\s*%(\}\s*)?%(if|elif|elsif|elseif|else|unless|case|switch|match)>'],
+      \ 'loop': ['\v^\s*%(for|foreach|while|until|do|loop|repeat)>',
+      \          '\v\.%(each|map|times|each_with_index|each_with_object|select|reject|forEach)>.*\s%(do|\{)\s*%(\|[^|]*\|)?\s*$',
+      \          '\v<do>\s*%(\|[^|]*\|)?\s*$'],
+      \ }
+
+" ── start detection ───────────────────────────────────────────
+function! s:IsComment(t) abort
+  return a:t =~# '\v^\s*%(//|/\*|\*|#|--|")'
+endfunction
+
+function! s:IsFunction(l) abort
+  let t = getline(a:l)
+  if t =~# s:fn_kw | return 1 | endif
+  if t =~# '\v<function>\s*\*?\s*\w*\s*\(' | return 1 | endif
+  if t =~# s:ctl | return 0 | endif
+  if t =~# '\v\=\>\s*\{\s*$' | return 1 | endif
+  if t =~# '\v\)\s*%(const|noexcept|override|final|mut|throws\s[^{]*|-\>\s*[^{]*|:\s*[A-Za-z_][^{]*)?\s*\{\s*$'
+    return 1
+  endif
+  " Allman style: `)` at end of line, `{` on the next line
+  let n = nextnonblank(a:l + 1)
+  if n > 0 && n <= a:l + 2 && t =~# '\v^[^#]*\)\s*$' && getline(n) =~# '^\s*{'
+    return 1
+  endif
+  return 0
+endfunction
+
+function! s:IsStart(kind, l) abort
+  let t = getline(a:l)
+  if s:IsComment(t) | return 0 | endif
+  if a:kind ==# 'function' | return s:IsFunction(a:l) | endif
+  for p in s:pat[a:kind]
+    if t =~# p | return 1 | endif
+  endfor
+  return 0
+endfunction
+
+" ── end detection ─────────────────────────────────────────────
+function! s:EndByIndent(l) abort
+  let base = indent(a:l)
+  let last = a:l
+  let n = a:l + 1
+  while n <= line('$')
+    let t = getline(n)
+    if t !~# '^\s*$'
+      if indent(n) > base
+            \ || (indent(n) == base && t =~# '\v^\s*%(elif|else|except|finally|elsif|elseif|rescue|ensure)>')
+        let last = n
+      else
+        break
+      endif
+    endif
+    let n += 1
+  endwhile
+  return {'l': last, 'c': max([strlen(getline(last)), 1])}
+endfunction
+
+function! s:EndByKeyword(l) abort
+  let t = getline(a:l)
+  let base = indent(a:l)
+  " one-liner: `if x then y end`
+  if t =~# '\v<%(end\w*|fi|done|esac)>[\)\],;]*\s*$'
+    return {'l': a:l, 'c': max([strlen(t), 1])}
+  endif
+  let cl_pat = '\v^\s*%(else|elseif|elsif|elif|rescue|ensure|when)>'
+  let clause = t =~# cl_pat
+  let endpat = t =~# '\v^\s*repeat>' ? '\v^\s*until>' : '\v^\s*%(end\w*|fi|done|esac)>'
+  let n = nextnonblank(a:l + 1)
+  while n > 0
+    let t2 = getline(n)
+    let ind = indent(n)
+    if ind < base
+      break
+    elseif ind == base
+      if t2 =~# endpat
+        return {'l': n, 'c': match(t2, '\S') + 1}
+      elseif t2 =~# cl_pat
+        if clause | break | endif
+      else
+        break
+      endif
+    endif
+    let n = nextnonblank(n + 1)
+  endwhile
+  let e = prevnonblank((n > 0 ? n : line('$') + 1) - 1)
+  return {'l': e, 'c': max([strlen(getline(e)), 1])}
+endfunction
+
+function! s:FindEnd(l) abort
+  let t  = getline(a:l)
+  let tc = substitute(t, '\s\+#.*$', '', '')
+  let tb = substitute(t, '\v\s*%(//|/\*).*$', '', '')
+
+  " 1. Python-style: header ends with ':'
+  if tc =~# ':\s*$' && tc !~# '{'
+    return s:EndByIndent(a:l)
+  endif
+
+  " 2. Brace languages
+  let open = []
+  let n = nextnonblank(a:l + 1)
+  if tb =~# '{\s*$'
+    let open = [a:l, strridx(tb, '{') + 1]
+  elseif n > 0 && n <= a:l + 2 && getline(n) =~# '^\s*{'
+    let open = [n, match(getline(n), '{') + 1]
+  elseif index(s:end_fts, &filetype) >= 0
+    return s:EndByKeyword(a:l)
+  elseif t =~# '{'
+    let open = [a:l, stridx(t, '{') + 1]
+  endif
+
+  if !empty(open)
+    call cursor(open[0], open[1])
+    let e = searchpairpos('{', '}', 'nW', s:skip)
+    if e[0] > 0
+      return {'l': e[0], 'c': e[1]}
+    endif
+  endif
+
+  " 3. Fallback
+  return index(s:end_fts, &filetype) >= 0 ? s:EndByKeyword(a:l) : s:EndByIndent(a:l)
+endfunction
+
+" ── finders ───────────────────────────────────────────────────
+function! s:FindKind(kind) abort
+  let cur    = line('.')
+  let minind = 9999
+  let l      = cur
+  let stop   = max([1, cur - 3000])
+  while l >= stop
+    let t = getline(l)
+    if t !~# '^\s*$'
+      let ind = indent(l)
+      if ind <= minind && s:IsStart(a:kind, l)
+        let e = s:FindEnd(l)
+        if e.l >= cur
+          let sc = match(t, '\v^\s*%(\}\s*)?\zs\S') + 1
+          return {'sl': l, 'sc': max([sc, 1]), 'el': e.l, 'ec': e.c}
+        endif
+      endif
+      if ind < minind | let minind = ind | endif
+    endif
+    let l -= 1
+  endwhile
+  return {}
+endfunction
+
+function! s:FindBlock() abort
+  let s = searchpairpos('{', '}', 'bnW', s:skip)
+  if s[0] > 0
+    call cursor(s[0], s[1])
+    let e = searchpairpos('{', '}', 'nW', s:skip)
+    if e[0] > 0
+      return {'sl': s[0], 'sc': s[1], 'el': e[0], 'ec': e[1]}
+    endif
+  endif
+  " no braces: innermost of the other constructs (Python, Ruby, Lua, ...)
+  let best = {}
+  for k in ['function', 'class', 'conditional', 'loop']
+    let r = s:FindKind(k)
+    if !empty(r) && (empty(best) || r.sl > best.sl)
+      let best = r
+    endif
+  endfor
+  return best
+endfunction
+
+function! s:Jump(kind, to_end) abort
+  let view = winsaveview()
+  let r = a:kind ==# 'block' ? s:FindBlock() : s:FindKind(a:kind)
+  call winrestview(view)
+  if empty(r)
+    echo 'Not inside a ' . a:kind
+    return
+  endif
+  if a:to_end
+    call cursor(r.el, r.ec)
+  else
+    call cursor(r.sl, r.sc)
+  endif
+endfunction
+
+" ── mappings (normal + visual) ────────────────────────────────
+" <Cmd> needs Vim 8.2.1978+ (already required elsewhere in this vimrc)
+for [s:k, s:kind] in [['f', 'function'], ['c', 'class'], ['i', 'conditional'],
+      \ ['b', 'block'], ['l', 'loop']]
+  for s:m in ['nnoremap', 'xnoremap']
+    execute s:m . " <silent> [" . s:k . " <Cmd>call <SID>Jump('" . s:kind . "', 0)<CR>"
+    execute s:m . " <silent> ]" . s:k . " <Cmd>call <SID>Jump('" . s:kind . "', 1)<CR>"
+  endfor
+endfor
+
+
+" ══════════════════════════════════════════════════════════════
+"  Text objects, extra navigation & argument swap
+"  (plugins are declared in the single plug#begin() block above)
+" ══════════════════════════════════════════════════════════════
+
+" ─── Selection ───────────────────────────────────────────────
+" af / if: provided by vim-textobj-function (and the python plugin)
+" ac / ic: provided by vim-textobj-python (Python only)
+" aa / ia: provided by targets.vim (arguments)
+" ai / ii: provided by vim-indent-object (indent block, approximates conditional)
+
+" aM / iM as aliases for function
+omap aM <Plug>(textobj-function-a)
+xmap aM <Plug>(textobj-function-a)
+omap iM <Plug>(textobj-function-i)
+xmap iM <Plug>(textobj-function-i)
+
+" ─── Repeatable moves ────────────────────────────────────────
+" ; and , already repeat f/F/t/T natively in Vim, nothing to configure.
+
+" ─── Navigation ──────────────────────────────────────────────
+" Function start/end: next/prev function (brace languages, column-0 style)
+noremap ]F ]]
+noremap [F [[
+
+" [f / ]f (function start/end) are NOT remapped to [{ / ]} here: the
+" "Structural jumps" section above already defines [f ]f (plus [c ]c
+" [i ]i [b ]b [l ]l) and understands functions, classes, conditionals and
+" loops. Mapping them again would silently replace it.
+" For the plain enclosing-brace jumps use [{ and ]} directly
+" (with a count, e.g. 3[{, to go further out).
+" [c / ]c are left to the structural jumps (class) as well.
+
+" Parameter navigation via sideways.vim:
+" (guarded so the keys don't error before :PlugInstall has run)
+if s:plug_ok
+  nnoremap <silent> ]a :SidewaysJumpRight<CR>
+  nnoremap <silent> [a :SidewaysJumpLeft<CR>
+
+  " ─── Swap ──────────────────────────────────────────────────
+  nnoremap <silent> <leader>csa :SidewaysRight<CR>
+  nnoremap <silent> <leader>csA :SidewaysLeft<CR>
+endif
 
 
 " ── FZF ───────────────────────────────────────────────────────
@@ -1755,4 +2450,3 @@ augroup MarksInitialLoad
     autocmd VimEnter * call s:MarksLoad()
   endif
 augroup END
-
