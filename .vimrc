@@ -700,6 +700,100 @@ autocmd FileType netrw nnoremap <buffer> <C-s> :new<CR>
 
 nnoremap <leader>v :Explore %:p:h<CR>
 
+" ── Netrw: p previews the file under the cursor ───────────────
+" Replaces netrw's built-in `p`. Resolves the full path of the
+" entry on the current line, opens it in a preview window (vertical
+" split on the right), and keeps the cursor in netrw so you can
+" move to another file and press p again to swap the preview.
+" Press p on a directory to get a message (directories aren't previewed).
+" Close the preview with :pclose or <C-w>z.
+function! s:NetrwEntryUnderCursor()
+  " Ask netrw itself first (handles thin/long/wide/tree listings)
+  let l:word = ''
+  try
+    let l:word = netrw#Call('NetrwGetWord')
+  catch
+    let l:word = ''
+  endtry
+
+  " Fallback: first whitespace-delimited token on the line
+  if empty(l:word)
+    let l:word = matchstr(getline('.'), '^\S\+')
+  endif
+  if empty(l:word) || l:word ==# '../' || l:word ==# './'
+    return ''
+  endif
+
+  if l:word =~# '^/'
+    let l:path = l:word
+  else
+    let l:dir  = get(b:, 'netrw_curdir', getcwd())
+    let l:path = l:dir . '/' . l:word
+  endif
+
+  " Drop trailing marker characters netrw may leave on names (e.g. '@' symlink, '*' exec)
+  if !filereadable(l:path) && !isdirectory(l:path)
+    let l:path = substitute(l:path, '[@*=|]$', '', '')
+  endif
+  return simplify(l:path)
+endfunction
+
+function! s:NetrwPreview()
+  let l:path = s:NetrwEntryUnderCursor()
+  if empty(l:path)
+    echo '[netrw] nothing to preview here'
+    return
+  endif
+  if isdirectory(l:path)
+    echo '[netrw] directory — nothing to preview'
+    return
+  endif
+  if !filereadable(l:path)
+    echohl WarningMsg | echo '[netrw] cannot read: ' . l:path | echohl None
+    return
+  endif
+
+  " Remember exactly where we are in the netrw window
+  let l:netrw_win = win_getid()
+  let l:pos       = getcurpos()
+  let l:topline   = line('w0')
+
+  " Replace any existing preview, then open the new one on the right.
+  silent! pclose
+  execute 'silent vertical rightbelow pedit ' . fnameescape(l:path)
+
+  " Widen the preview window, then jump back to netrw.
+  " Default: 60% of the screen. Override with e.g. `let g:netrw_preview_width = 100`
+  " (absolute columns) or `let g:netrw_preview_ratio = 0.7` (fraction of screen).
+  " noautocmd: stops netrw from refreshing its listing (which resets the cursor).
+  let l:width = get(g:, 'netrw_preview_width', float2nr(&columns * get(g:, 'netrw_preview_ratio', 0.6)))
+  noautocmd silent! wincmd P
+  if &previewwindow
+    execute 'noautocmd vertical resize ' . l:width
+  endif
+  noautocmd call win_gotoid(l:netrw_win)
+
+  " Restore cursor + scroll position in netrw
+  call setpos('.', l:pos)
+  execute 'noautocmd normal! ' . l:topline . 'Gzt'
+  call setpos('.', l:pos)
+endfunction
+
+" Netrw installs its own buffer-local `p` mapping *after* FileType fires,
+" which silently overrides ours. So we (re)apply the mapping a tick later,
+" on both FileType and BufEnter (netrw rebuilds its maps on refresh too).
+function! s:MapNetrwPreview(buf)
+  if bufnr('%') == a:buf && &filetype ==# 'netrw'
+    nnoremap <buffer> <silent> <nowait> p :call <SID>NetrwPreview()<CR>
+  endif
+endfunction
+
+augroup NetrwPreviewMap
+  autocmd!
+  autocmd FileType netrw call timer_start(0, {-> s:MapNetrwPreview(bufnr('%'))})
+  autocmd BufEnter * if &filetype ==# 'netrw' | call timer_start(0, {-> s:MapNetrwPreview(bufnr('%'))}) | endif
+augroup END
+
 
 " ── Copy Path Helpers ─────────────────────────────────────────
 nnoremap <leader>yy :let @+ = fnamemodify(expand('%'), ':.')<CR>
@@ -1533,4 +1627,3 @@ augroup END
 
 " ── Initial load ──────────────────────────────────────────────
 call s:MarksLoad()
-
