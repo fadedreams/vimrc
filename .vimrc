@@ -1305,7 +1305,19 @@ function! s:CopyPath(mod, label)
   echo 'Copied ' . a:label . ': ' . l:val
 endfunction
 
-nnoremap <silent> <leader>yy :call <SID>CopyPath('%:.', 'relative')<CR>
+" <leader>yy: relative path on the first line, blank line, then the whole file
+function! s:CopyPathAndContent()
+  let l:path = expand('%:.')
+  if l:path ==# ''
+    echohl WarningMsg | echo '[yank] buffer has no file name' | echohl None
+    return
+  endif
+  let l:lines = [l:path, ''] + getline(1, '$')
+  call setreg(has('clipboard') ? '+' : '"', join(l:lines, "\n") . "\n", 'l')
+  echo printf('Copied %s + %d lines', l:path, line('$'))
+endfunction
+
+nnoremap <silent> <leader>yy :call <SID>CopyPathAndContent()<CR>
 nnoremap <silent> <leader>yn :call <SID>CopyPath('%:t', 'name')<CR>
 nnoremap <silent> <leader>yp :call <SID>CopyPath('%:p', 'absolute')<CR>
 
