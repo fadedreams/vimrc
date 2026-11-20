@@ -14,17 +14,25 @@ set noswapfile
 set nobackup
 set nowritebackup
 
-" :PlugInstall manually if auto install did not worked
-" ── Auto-install vim-plug ─────────────────────────────────────
+" ── Auto-install vim-plug (only when git exists) ──────────────
+" vim-plug prints "`git` executable not found" (plus a Press-ENTER
+" prompt) from plug#begin() when git is missing, and it cannot install
+" any plugin without git anyway. So without git we skip vim-plug
+" completely: no message, no plugins. Install git and restart Vim and
+" everything bootstraps itself.
+" :PlugInstall manually if auto install did not work
 let s:plug_file = expand('~/.vim/autoload/plug.vim')
 let s:plug_url  = 'https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim'
+let s:plug_ok   = 0
 
-if empty(glob(s:plug_file))
-  call system('curl -fsLo ' . s:plug_file . ' --create-dirs ' . s:plug_url)
-endif
-
-if filereadable(s:plug_file)
-  execute 'source ' . s:plug_file
+if executable('git')
+  if empty(glob(s:plug_file)) && executable('curl')
+    call system('curl -fsLo ' . s:plug_file . ' --create-dirs ' . s:plug_url)
+  endif
+  if filereadable(s:plug_file)
+    execute 'source ' . s:plug_file
+    let s:plug_ok = exists('*plug#begin')
+  endif
 endif
 
 " ── Install fzf / ripgrep / fd (cross-distro) ────────────────
@@ -99,9 +107,11 @@ endif
 " Run the check after startup so the message isn't swallowed or
 " followed by a "Press ENTER" prompt. (The guard avoids a duplicate
 " run when the vimrc is re-sourced from the auto PlugInstall below.)
+" Only relevant when plugins (fzf) are in play, so it stays silent
+" on a bare box without git.
 augroup FzfDepsCheck
   autocmd!
-  if !v:vim_did_enter
+  if s:plug_ok && !v:vim_did_enter
     autocmd VimEnter * ++once call s:CheckFzfDeps()
   endif
 augroup END
@@ -112,7 +122,9 @@ augroup END
 " ══════════════════════════════════════════════════════════════
 
 " ── Plugins (vim-plug) ────────────────────────────────────────
-if exists('*plug#begin')
+" No `else` branch on purpose: if vim-plug isn't loaded (no git /
+" no curl) we silently carry on with the plain-Vim config below.
+if s:plug_ok
   call plug#begin('~/.vim/plugged')
     Plug 'tpope/vim-commentary'
     Plug 'tpope/vim-surround'
@@ -135,10 +147,6 @@ if exists('*plug#begin')
           \ |   PlugInstall --sync | q | source $MYVIMRC
           \ | endif
   augroup END
-else
-  echohl WarningMsg
-  echo '[plug] vim-plug not loaded (is curl installed? check ~/.vim/autoload/plug.vim)'
-  echohl None
 endif
 
 " ── Colorscheme ───────────────────────────────────────────────
@@ -1036,6 +1044,18 @@ let g:fzf_colors = {
   \ 'spinner': ['fg', 'Function'],
   \ 'header':  ['fg', 'Comment'] }
 
+" True only when fzf.vim is actually installed (needs git + :PlugInstall).
+" Without it the fzf mappings below print one short line instead of
+" throwing "Unknown function" errors.
+function! s:HaveFzf()
+  let l:p = get(g:, 'plugs', {})
+  if has_key(l:p, 'fzf.vim') && isdirectory(l:p['fzf.vim'].dir)
+    return 1
+  endif
+  echohl WarningMsg | echo '[fzf] plugin not installed (needs git, then :PlugInstall)' | echohl None
+  return 0
+endfunction
+
 " bat is installed as `batcat` on Debian/Ubuntu; fall back to head if neither exists
 if executable('bat')
   let s:bat = 'bat'
@@ -1055,6 +1075,7 @@ let s:rg_opts    = '--hidden --no-ignore ' . s:rg_globs . ' --ignore-case --colu
 let s:fd_excludes = '--exclude .git --exclude node_modules --exclude .cache --exclude dist --exclude build --exclude target'
 
 function! FdFiles()
+  if !s:HaveFzf() | return | endif
   let l:source = $FD . ' --type f --hidden ' . s:fd_excludes
   call fzf#vim#files(getcwd(), {
     \ 'source':  l:source,
@@ -1068,6 +1089,7 @@ endfunction
 nnoremap <silent> <leader><leader> :call FdFiles()<CR>
 
 function! RipgrepFzf(query, fullscreen)
+  if !s:HaveFzf() | return | endif
   let command_fmt     = 'rg ' . s:rg_opts . ' -- %s || true'
   let initial_command = printf(command_fmt, shellescape(a:query))
   let reload_command  = printf(command_fmt, '{q}')
@@ -1087,6 +1109,7 @@ command! -nargs=* -bang RG call RipgrepFzf(<q-args>, <bang>0)
 nnoremap <silent> <leader>n :RG<CR>
 
 function! RipgrepWord(word, fullscreen)
+  if !s:HaveFzf() | return | endif
   if a:word ==# '' | echo 'No word under cursor' | return | endif
   let command_fmt     = 'rg ' . s:rg_opts . ' -- %s || true'
   let initial_command = printf(command_fmt, shellescape(a:word))
@@ -1732,3 +1755,4 @@ augroup MarksInitialLoad
     autocmd VimEnter * call s:MarksLoad()
   endif
 augroup END
+
