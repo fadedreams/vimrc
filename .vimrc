@@ -1,7 +1,13 @@
 " ══════════════════════════════════════════════════════════════
 "  .vimrc   (save as ~/.vimrc)
 " ══════════════════════════════════════════════════════════════
+" encoding must be set before scriptencoding so the multibyte
+" characters below (box drawing, icons, bullets) parse correctly.
+set encoding=utf-8
+scriptencoding utf-8
+
 let mapleader = " "
+let maplocalleader = "\\"      " was implicit; make it explicit
 
 " No swap files (set early so it always applies)
 set noswapfile
@@ -22,7 +28,7 @@ if filereadable(s:plug_file)
 endif
 
 " ── Install fzf / ripgrep / fd (cross-distro) ────────────────
-" NOTE: this now only *installs* things when you explicitly run
+" NOTE: this only *installs* things when you explicitly run
 " :InstallFzfDeps. It used to run automatically on every startup,
 " which meant a missing dep silently triggered `sudo apt-get/...`
 " and Vim would hang waiting on a password prompt.
@@ -31,6 +37,7 @@ function! s:InstallFzfDeps()
 
   if !executable('fzf')      | call add(l:missing, 'fzf')      | endif
   if !executable('rg')       | call add(l:missing, 'rg')        | endif
+  if !executable('bat') && !executable('batcat') | call add(l:missing, 'bat') | endif
   if !executable('fd') && !executable('fdfind')
     call add(l:missing, 'fd')
   endif
@@ -39,70 +46,31 @@ function! s:InstallFzfDeps()
 
   echo '[deps] Missing: ' . join(l:missing, ', ') . ' — installing...'
 
-  if executable('apt-get')
-    let l:pkgs = []
-    for tool in l:missing
-      call add(l:pkgs, tool ==# 'fd' ? 'fd-find' :
-            \           tool ==# 'rg' ? 'ripgrep' : tool)
-    endfor
-    execute 'silent !sudo apt-get install -y ' . join(l:pkgs, ' ')
+  " [executable, install command, package name for fd]
+  " (ripgrep is always 'ripgrep'; fzf and bat keep their names)
+  let l:managers = [
+        \ ['apt-get', '!sudo apt-get install -y ',     'fd-find'],
+        \ ['pacman',  '!sudo pacman -S --noconfirm ',  'fd'],
+        \ ['dnf',     '!sudo dnf install -y ',         'fd-find'],
+        \ ['yum',     '!sudo yum install -y ',         'fd-find'],
+        \ ['zypper',  '!sudo zypper install -y ',      'fd'],
+        \ ['apk',     '!sudo apk add ',                'fd'],
+        \ ['brew',    '!brew install ',                'fd'],
+        \ ]
 
-  elseif executable('pacman')
-    let l:pkgs = []
-    for tool in l:missing
-      call add(l:pkgs, tool ==# 'fd' ? 'fd' :
-            \           tool ==# 'rg' ? 'ripgrep' : tool)
-    endfor
-    execute 'silent !sudo pacman -S --noconfirm ' . join(l:pkgs, ' ')
+  for [exe, cmd, fdname] in l:managers
+    if executable(exe)
+      let l:pkgs = map(copy(l:missing),
+            \ 'v:val ==# "fd" ? fdname : v:val ==# "rg" ? "ripgrep" : v:val')
+      execute cmd . join(l:pkgs, ' ')
+      echo '[deps] Done. Restart Vim if fzf keymaps seem broken.'
+      return
+    endif
+  endfor
 
-  elseif executable('dnf')
-    let l:pkgs = []
-    for tool in l:missing
-      call add(l:pkgs, tool ==# 'fd' ? 'fd-find' :
-            \           tool ==# 'rg' ? 'ripgrep' : tool)
-    endfor
-    execute 'silent !sudo dnf install -y ' . join(l:pkgs, ' ')
-
-  elseif executable('yum')
-    let l:pkgs = []
-    for tool in l:missing
-      call add(l:pkgs, tool ==# 'fd' ? 'fd-find' :
-            \           tool ==# 'rg' ? 'ripgrep' : tool)
-    endfor
-    execute 'silent !sudo yum install -y ' . join(l:pkgs, ' ')
-
-  elseif executable('zypper')
-    let l:pkgs = []
-    for tool in l:missing
-      call add(l:pkgs, tool ==# 'fd' ? 'fd' :
-            \           tool ==# 'rg' ? 'ripgrep' : tool)
-    endfor
-    execute 'silent !sudo zypper install -y ' . join(l:pkgs, ' ')
-
-  elseif executable('apk')
-    let l:pkgs = []
-    for tool in l:missing
-      call add(l:pkgs, tool ==# 'fd' ? 'fd' :
-            \           tool ==# 'rg' ? 'ripgrep' : tool)
-    endfor
-    execute 'silent !sudo apk add ' . join(l:pkgs, ' ')
-
-  elseif executable('brew')
-    let l:pkgs = []
-    for tool in l:missing
-      call add(l:pkgs, tool ==# 'fd' ? 'fd' :
-            \           tool ==# 'rg' ? 'ripgrep' : tool)
-    endfor
-    execute 'silent !brew install ' . join(l:pkgs, ' ')
-
-  else
-    echohl WarningMsg
-    echo '[deps] No supported package manager found. Install manually: ' . join(l:missing, ' ')
-    echohl None
-    return
-  endif
-
-  echo '[deps] Done. Restart Vim if fzf keymaps seem broken.'
+  echohl WarningMsg
+  echo '[deps] No supported package manager found. Install manually: ' . join(l:missing, ' ')
+  echohl None
 endfunction
 
 " Lightweight startup check — only warns, never shells out to sudo.
@@ -110,6 +78,7 @@ function! s:CheckFzfDeps()
   let l:missing = []
   if !executable('fzf')                            | call add(l:missing, 'fzf') | endif
   if !executable('rg')                             | call add(l:missing, 'rg')  | endif
+  if !executable('bat') && !executable('batcat')   | call add(l:missing, 'bat') | endif
   if !executable('fd') && !executable('fdfind')    | call add(l:missing, 'fd')  | endif
   if !empty(l:missing)
     echohl WarningMsg
@@ -127,7 +96,15 @@ else
   let $FD = 'fd'
 endif
 
-call s:CheckFzfDeps()
+" Run the check after startup so the message isn't swallowed or
+" followed by a "Press ENTER" prompt. (The guard avoids a duplicate
+" run when the vimrc is re-sourced from the auto PlugInstall below.)
+augroup FzfDepsCheck
+  autocmd!
+  if !v:vim_did_enter
+    autocmd VimEnter * ++once call s:CheckFzfDeps()
+  endif
+augroup END
 
 
 " ══════════════════════════════════════════════════════════════
@@ -140,7 +117,8 @@ if exists('*plug#begin')
     Plug 'tpope/vim-commentary'
     Plug 'tpope/vim-surround'
     Plug 'tpope/vim-repeat'
-    Plug 'tpope/vim-eunuch'
+    Plug 'tpope/vim-eunuch'          " :Delete :Rename :Mkdir :Chmod ...
+    Plug 'tpope/vim-fugitive'
     Plug 'jiangmiao/auto-pairs'
     Plug 'mbbill/undotree'
     Plug 'luochen1990/rainbow'
@@ -164,7 +142,9 @@ else
 endif
 
 " ── Colorscheme ───────────────────────────────────────────────
-set termguicolors
+if has('termguicolors')
+  set termguicolors
+endif
 set background=dark
 silent! colorscheme habamax
 if get(g:, 'colors_name', '') !=# 'habamax'
@@ -180,12 +160,18 @@ let g:rainbow_conf = {
 
 
 " ── Clipboard ─────────────────────────────────────────────────
-set clipboard=unnamedplus
+" unnamedplus needs a Vim built with +clipboard
+" (check with: vim --version | grep clipboard)
+if has('clipboard')
+  set clipboard=unnamedplus
+endif
 
-noremap <Leader>y "+y
-noremap <Leader>Y "+Y
-noremap <Leader>p "+p
-noremap <Leader>P "+P
+" <leader>y / <leader>Y removed: clipboard=unnamedplus already yanks to the
+" system clipboard, and <leader>y was a prefix of <leader>yy/yn/yp, which
+" made Vim wait for timeoutlen after pressing it.
+" Visual-mode only (a plain `noremap` also hit operator-pending mode, and
+" its normal-mode half was overridden later by the :put mapping anyway).
+xnoremap <Leader>p "+p
 nnoremap <silent> <localleader>' :registers<cr>
 " Search for visually selected text (Ctrl+f)
 vnoremap <silent> <C-f> y/\V<C-r>=escape(@", '/\')<CR><CR>
@@ -195,7 +181,7 @@ set number
 set relativenumber
 set cursorline
 set laststatus=2
-set showmode
+set noshowmode            " the custom statusline already shows the mode
 set showcmd
 set signcolumn=yes
 
@@ -206,7 +192,7 @@ set tabstop=4
 set shiftwidth=4
 set softtabstop=4
 set autoindent
-set smartindent
+" (smartindent removed: `filetype plugin indent on` handles indenting)
 set breakindent
 set backspace=indent,eol,start
 set nojoinspaces
@@ -233,11 +219,21 @@ set hidden
 set autoread
 set undofile
 set undodir=~/.vim/undo//
-set encoding=utf-8
+
+" autoread only takes effect when Vim checks timestamps
+augroup AutoReadCheck
+  autocmd!
+  autocmd FocusGained,BufEnter,CursorHold *
+        \ if mode() !=# 'c' && getcmdwintype() ==# '' | checktime | endif
+augroup END
 
 set fileformats=unix,dos
-" ── Auto-create missing directories ───────────────────────────
+" ── Auto-create missing directories (on save) ─────────────────
 function! s:AutoMkdir(dir)
+  " skip empty names and URL-style buffers (fugitive://, netrw scp://, ...)
+  if a:dir ==# '' || a:dir =~# '^\w\+://'
+    return
+  endif
   if !isdirectory(a:dir)
     call mkdir(a:dir, 'p', 0755)
   endif
@@ -245,7 +241,7 @@ endfunction
 
 augroup AutoMkdir
   autocmd!
-  autocmd BufNewFile * call s:AutoMkdir(expand('<afile>:p:h'))
+  autocmd BufWritePre * call s:AutoMkdir(expand('<afile>:p:h'))
 augroup END
 
 " Make sure undo dir exists
@@ -311,10 +307,13 @@ nnoremap <C-BS>     :bd<CR>
 " definition per key avoids that mismatch.
 
 " ── Whitespace cleanup ────────────────────────────────────────
+" Strips CRs and trailing whitespace only. Blank lines are kept,
+" and the cursor/scroll position is restored afterwards.
 function! s:CleanWhitespace()
-  silent! %s/\r\n\?/\n/g
-  silent! %s/\s\+$//g
-  silent! g/^\s*$/d
+  let l:view = winsaveview()
+  keeppatterns silent! %s/\r$//e
+  keeppatterns silent! %s/\s\+$//e
+  call winrestview(l:view)
 endfunction
 nnoremap <silent> <leader>ww :call <SID>CleanWhitespace()<CR>
 nnoremap <leader>wc :set ff=unix<CR>
@@ -326,15 +325,19 @@ nnoremap <leader>wa :%!awk '{print $1, $2, $3, $4, $5, $6}'
 " Visual $ goes to last non-blank char (like g_)
 vnoremap $ g_
 
-" Paste in visual mode: keep register after pasting over selection
-xnoremap p pgvy
+" Paste in visual mode without overwriting the register with the
+" replaced text. `P` does this natively on Vim 8.2.4242+; older
+" versions fall back to the yank-it-back trick.
+if has('patch-8.2.4242')
+  xnoremap p P
+else
+  xnoremap p pgvy
+endif
 
 " Paste below / above in normal mode
 nnoremap <silent> <leader>p :put<CR>
-nnoremap <silent> <S-p>     :put!<CR>
-
-" Replace selection with clipboard in visual mode
-vnoremap <leader>p "+p
+" (was <S-p>, which is just `P` and silently turned it into a linewise paste)
+nnoremap <silent> <leader>P :put!<CR>
 
 " System clipboard paste in insert mode
 inoremap <A-p> <C-r>+
@@ -393,9 +396,10 @@ function! s:GotoMiddle()
 endfunction
 nnoremap <silent> M :call <SID>GotoMiddle()<CR>
 
-" j/k on wrapped lines
-nnoremap j gj
-nnoremap k gk
+" j/k move by screen line on wrapped text, but keep real-line
+" motion when a count is given (so 5j / 5k still work with relativenumber)
+nnoremap <expr> j v:count ? 'j' : 'gj'
+nnoremap <expr> k v:count ? 'k' : 'gk'
 
 " Escape insert mode
 inoremap jk <Esc>
@@ -433,6 +437,7 @@ function! s:JumpConflict(direction)
   endif
 endfunction
 
+" <Cmd> needs Vim 8.2.1978+
 nnoremap ]g <Cmd>call <SID>JumpConflict('next')<CR>
 nnoremap [g <Cmd>call <SID>JumpConflict('prev')<CR>
 
@@ -458,8 +463,8 @@ nnoremap <silent> \]         :bnext<CR>
 inoremap <silent> <C-h> <Esc>:bnext<CR>
 inoremap <silent> <C-l> <Esc>:bprevious<CR>
 
-" chmod +x current file
-nnoremap <leader>bx :!chmod +x %<CR>
+" chmod +x / delete file from disk / rename: use vim-eunuch
+"   :Chmod +x   :Delete   :Rename {name}   :Mkdir
 
 " ── Reopen last closed buffer ─────────────────────────────────
 let g:last_closed_buffer = ''
@@ -469,17 +474,21 @@ augroup TrackClosedBuffers
   autocmd BufDelete * call s:TrackLastClosed(expand('<abuf>'))
 augroup END
 
+" Stores an absolute path (relative paths break after :cd) and ignores
+" special buffers such as netrw directory listings.
 function! s:TrackLastClosed(bufnr)
-  let l:name = bufname(str2nr(a:bufnr))
-  if l:name !=# ''
-    let g:last_closed_buffer = l:name
+  let l:nr = str2nr(a:bufnr)
+  let l:name = bufname(l:nr)
+  if l:name !=# '' && getbufvar(l:nr, '&buftype') ==# '' && !isdirectory(l:name)
+    let g:last_closed_buffer = fnamemodify(l:name, ':p')
   endif
 endfunction
 
+" :edit instead of :b — `:b name` does partial matching and can open the
+" wrong buffer.
 function! ReopenLastBuffer()
   if g:last_closed_buffer !=# '' && filereadable(g:last_closed_buffer)
-    execute 'badd ' . fnameescape(g:last_closed_buffer)
-    execute 'b '   . fnameescape(g:last_closed_buffer)
+    execute 'edit ' . fnameescape(g:last_closed_buffer)
   else
     echohl WarningMsg | echo "No recently closed buffer or file does not exist" | echohl None
   endif
@@ -488,34 +497,20 @@ endfunction
 nnoremap <silent> <leader>bl :call ReopenLastBuffer()<CR>
 nnoremap <silent> <C-;>      :call ReopenLastBuffer()<CR>
 
-" ── Delete buffer + file from disk (confirm, default y) ───────
-function! s:DeleteBufferAndFile()
-  let l:file = expand('%:p')
-  if l:file ==# '' || &buftype !=# ''
-    echo "No file to delete"
-    return
-  endif
-  let l:fname = fnamemodify(l:file, ':t')
-  let l:input = input('Delete "' . l:fname . '" from disk? [Y/n]: ', 'y')
-  if l:input ==# '' || tolower(l:input) ==# 'y'
-    bdelete!
-    if delete(l:file) == 0
-      echo "Nuked: " . l:file
-    else
-      echo "Delete failed"
-    endif
-  else
-    echo "Deletion cancelled"
-  endif
-endfunction
-
-" Distinct from the plain-close <leader>bd above — this one
-" removes the file from disk, so it gets its own binding instead
-" of silently overriding <leader>bd.
-nnoremap <silent> <leader>bX :call <SID>DeleteBufferAndFile()<CR>
-
 " ── Delete other buffers (spare pinned ones) ──────────────────
 let g:pinned_buffers = {}
+
+" Toggle pin on the current buffer (pinned buffers survive <leader>bo)
+function! s:TogglePinBuffer()
+  let l:nr = bufnr('%')
+  if get(g:pinned_buffers, l:nr, 0)
+    call remove(g:pinned_buffers, l:nr)
+    echo '[buf] unpinned ' . bufname(l:nr)
+  else
+    let g:pinned_buffers[l:nr] = 1
+    echo '[buf] pinned ' . bufname(l:nr)
+  endif
+endfunction
 
 function! s:DeleteOtherBuffers()
   let l:current = bufnr('%')
@@ -526,6 +521,7 @@ function! s:DeleteOtherBuffers()
 endfunction
 
 nnoremap <silent> <leader>bo :call <SID>DeleteOtherBuffers()<CR>
+nnoremap <silent> <leader>bp :call <SID>TogglePinBuffer()<CR>
 
 " ── Buffer info float ─────────────────────────────────────────
 function! s:BufferInfo()
@@ -544,6 +540,7 @@ function! s:BufferInfo()
     endif
   endif
 
+  " NOTE: GNU `stat -c`; on macOS perms/owner show '---'.
   let l:perms = '---'
   if l:file !=# ''
     let l:raw = system('stat -c %a ' . shellescape(l:file))
@@ -666,8 +663,11 @@ nnoremap <leader>fK :call <SID>CheckKey()<CR>
 
 
 " ── Performance ───────────────────────────────────────────────
-set lazyredraw
-set ttyfast
+" (lazyredraw removed: it causes stale redraws with popups/statuslines)
+" Alt (<A-x>/<M-x>) mappings arrive as <Esc>x in most terminals; a short
+" ttimeoutlen makes them reliable and makes <Esc> feel instant.
+set ttimeout
+set ttimeoutlen=50
 set updatetime=300
 set timeoutlen=500
 set history=1000
@@ -690,13 +690,15 @@ let g:netrw_localcopydircmd    = 'cp'
 let g:netrw_localcopydircmdopt = '-r'
 
 let g:netrw_banner    = 1
-let g:netrw_liststyle = 0
 let g:netrw_winsize   = 30
 let g:netrw_hide      = 0
 let g:netrw_preview   = 1
-autocmd FileType netrw nnoremap <buffer> <A-q> :bdelete<CR>
-autocmd FileType netrw nnoremap <buffer> <C-v> :vnew<CR>
-autocmd FileType netrw nnoremap <buffer> <C-s> :new<CR>
+augroup NetrwMaps
+  autocmd!
+  autocmd FileType netrw nnoremap <buffer> <A-q> :bdelete<CR>
+  autocmd FileType netrw nnoremap <buffer> <C-v> :vnew<CR>
+  autocmd FileType netrw nnoremap <buffer> <C-s> :new<CR>
+augroup END
 
 nnoremap <leader>v :Explore %:p:h<CR>
 
@@ -857,22 +859,46 @@ nnoremap <leader>yp :let @+ = expand('%:p')<CR>
 
 
 " ── Diff Split Picker ─────────────────────────────────────────
+" Fixes: the old FileType autocmd was registered after :Explore had
+" already fired FileType (so <CR>/q were never mapped), and
+" filereadable() got a bare filename relative to cwd instead of the
+" netrw directory.
+let s:diff_origin = -1
+
+function! s:MapDiffPicker(buf)
+  if bufnr('%') == a:buf && &filetype ==# 'netrw'
+    nnoremap <buffer> <silent> <nowait> <CR> :call <SID>NetrwDiffOpen()<CR>
+    nnoremap <buffer> <silent> <nowait> q    :call <SID>DiffPickerClose()<CR>
+  endif
+endfunction
+
+function! s:DiffPickerClose()
+  let l:nb = bufnr('%')
+  silent! nunmap <buffer> <CR>
+  silent! nunmap <buffer> q
+  if s:diff_origin > 0 && bufexists(s:diff_origin)
+    execute 'buffer ' . s:diff_origin
+  endif
+  silent! execute 'bdelete ' . l:nb
+endfunction
+
 function! OpenDiffPicker()
-  execute 'Explore ' . expand('%:p:h')
-  augroup DiffPicker
-    autocmd!
-    autocmd FileType netrw nnoremap <buffer> <CR>
-          \ :call <SID>NetrwDiffOpen()<CR>
-    autocmd FileType netrw nnoremap <buffer> q
-          \ :bdelete<CR>:autocmd! DiffPicker<CR>
-  augroup END
+  let s:diff_origin = bufnr('%')
+  execute 'Explore ' . fnameescape(expand('%:p:h'))
+  call s:MapDiffPicker(bufnr('%'))
+  call timer_start(0, {-> s:MapDiffPicker(bufnr('%'))})   " netrw re-applies its maps
 endfunction
 
 function! s:NetrwDiffOpen()
-  let l:target = netrw#Call('NetrwGetWord')
-  if !empty(l:target) && filereadable(l:target)
-    bdelete
-    autocmd! DiffPicker
+  let l:target = s:NetrwEntryUnderCursor()
+  if empty(l:target) | return | endif
+  if isdirectory(l:target)
+    execute 'edit ' . fnameescape(l:target)
+    call timer_start(0, {-> s:MapDiffPicker(bufnr('%'))})
+    return
+  endif
+  if filereadable(l:target)
+    call s:DiffPickerClose()
     execute 'vert diffsplit ' . fnameescape(l:target)
   endif
 endfunction
@@ -881,7 +907,7 @@ nnoremap <leader>dt :call OpenDiffPicker()<CR>
 
 
 " ── Undotree ──────────────────────────────────────────────────
-nnoremap <leader>u :UndotreeToggle<CR>
+nnoremap <leader>ut :UndotreeToggle<CR>
 let g:undotree_WindowLayout       = 2
 let g:undotree_ShortIndicators    = 1
 let g:undotree_SetFocusWhenToggle = 1
@@ -997,7 +1023,22 @@ let g:fzf_colors = {
   \ 'spinner': ['fg', 'Function'],
   \ 'header':  ['fg', 'Comment'] }
 
-let s:rg_opts    = '--hidden --no-ignore --ignore-case --column --line-number --no-heading --color=always'
+" bat is installed as `batcat` on Debian/Ubuntu; fall back to head if neither exists
+if executable('bat')
+  let s:bat = 'bat'
+elseif executable('batcat')
+  let s:bat = 'batcat'
+else
+  let s:bat = ''
+endif
+let s:preview_file = empty(s:bat) ? 'head -n 500 {}'  : s:bat . ' --color=always --style=numbers {}'
+let s:preview_grep = empty(s:bat) ? 'head -n 500 {1}' : s:bat . ' --color=always {1} --highlight-line {2}'
+
+" --no-ignore searches files that .gitignore would hide, so the heavy
+" directories are excluded explicitly (same set as the fd excludes below).
+" Drop --no-ignore if you'd rather just respect .gitignore.
+let s:rg_globs = '--glob=!.git --glob=!node_modules --glob=!dist --glob=!build --glob=!target --glob=!.cache'
+let s:rg_opts    = '--hidden --no-ignore ' . s:rg_globs . ' --ignore-case --column --line-number --no-heading --color=always'
 let s:fd_excludes = '--exclude .git --exclude node_modules --exclude .cache --exclude dist --exclude build --exclude target'
 
 function! FdFiles()
@@ -1006,7 +1047,7 @@ function! FdFiles()
     \ 'source':  l:source,
     \ 'options': [
     \   '--prompt',  'Files> ',
-    \   '--preview', 'bat --color=always --style=numbers {}',
+    \   '--preview', s:preview_file,
     \   '--preview-window', 'right:50%:wrap'
     \ ]}, 0)
 endfunction
@@ -1023,7 +1064,7 @@ function! RipgrepFzf(query, fullscreen)
     \   '--query', a:query,
     \   '--bind', 'change:reload:' . reload_command,
     \   '--delimiter', ':',
-    \   '--preview', 'bat --color=always {1} --highlight-line {2}',
+    \   '--preview', s:preview_grep,
     \   '--preview-window', '+{2}-/2'
     \ ]}
   call fzf#vim#grep(initial_command, fzf#vim#with_preview(spec), a:fullscreen)
@@ -1033,7 +1074,7 @@ command! -nargs=* -bang RG call RipgrepFzf(<q-args>, <bang>0)
 nnoremap <silent> <leader>n :RG<CR>
 
 function! RipgrepWord(word, fullscreen)
-  let s:last_rg_query = a:word
+  if a:word ==# '' | echo 'No word under cursor' | return | endif
   let command_fmt     = 'rg ' . s:rg_opts . ' -- %s || true'
   let initial_command = printf(command_fmt, shellescape(a:word))
   let reload_command  = printf(command_fmt, '{q}')
@@ -1044,7 +1085,7 @@ function! RipgrepWord(word, fullscreen)
     \   '--prompt', 'Grep[' . a:word . ']> ',
     \   '--bind', 'change:reload:' . reload_command,
     \   '--delimiter', ':',
-    \   '--preview', 'bat --color=always {1} --highlight-line {2}',
+    \   '--preview', s:preview_grep,
     \   '--preview-window', '+{2}-/2'
     \ ]}
   call fzf#vim#grep(initial_command, fzf#vim#with_preview(spec), a:fullscreen)
@@ -1052,60 +1093,51 @@ endfunction
 
 nnoremap <silent> <leader>1 :call RipgrepWord(expand('<cword>'), 0)<CR>
 
+" Grep the path segment (split on / and \) under the cursor
 function! s:GrepUnderCursor2()
   let l:line = getline('.')
-  let l:col  = col('.')
-  let l:s = searchpos('\S\+', 'bcn', line('.'))[1] - 1
-  let l:e = searchpos('\S\+', 'cen', line('.'))[1]
-  if l:s < 0 || l:e <= 0
+  let l:idx  = col('.') - 1
+  if l:idx >= len(l:line) || l:line[l:idx] =~# '\s'
     echo "No token under cursor"
     return
   endif
-  let l:token = l:line[l:s : l:e - 1]
-  let l:cur_start = 0
-  let l:seg_start = 0
-  let l:seg_end   = len(l:token)
-  let l:i = 0
-  while l:i < len(l:token)
-    let l:ch = l:token[l:i]
-    if l:ch ==# '/' || l:ch ==# '\'
-      let l:abs_s = l:s + l:cur_start
-      let l:abs_e = l:s + l:i
-      if l:col - 1 >= l:abs_s && l:col - 1 < l:abs_e
-        let l:seg_start = l:cur_start
-        let l:seg_end   = l:i
-        break
-      endif
-      let l:cur_start = l:i + 1
-    endif
-    let l:i += 1
+
+  " Bounds of the whitespace-delimited token around the cursor
+  let l:s = l:idx
+  while l:s > 0 && l:line[l:s - 1] !~# '\s'
+    let l:s -= 1
   endwhile
-  if l:seg_start == 0 && l:seg_end == len(l:token)
-    let l:seg_start = l:cur_start
+  let l:e = l:idx
+  while l:e < len(l:line) - 1 && l:line[l:e + 1] !~# '\s'
+    let l:e += 1
+  endwhile
+
+  " Cursor on a separator: use the neighbouring segment
+  if l:line[l:idx] =~# '[/\\]'
+    let l:idx += (l:idx < l:e) ? 1 : -1
   endif
-  let l:word = l:token[l:seg_start : l:seg_end - 1]
-  if l:word ==# ''
+  if l:idx < l:s || l:line[l:idx] =~# '[/\\]'
     echo "No token under cursor"
     return
   endif
-  call RipgrepWord(l:word, 0)
+
+  " Expand to the segment between separators
+  let l:ss = l:idx
+  while l:ss > l:s && l:line[l:ss - 1] !~# '[/\\]'
+    let l:ss -= 1
+  endwhile
+  let l:se = l:idx
+  while l:se < l:e && l:line[l:se + 1] !~# '[/\\]'
+    let l:se += 1
+  endwhile
+
+  call RipgrepWord(l:line[l:ss : l:se], 0)
 endfunction
 
 nnoremap <silent> <leader>2 :call <SID>GrepUnderCursor2()<CR>
 
-function! s:GrepUnderCursor3()
-  let l:line = getline('.')
-  let l:col  = col('.')
-  let l:s = searchpos('\S\+', 'bcn', line('.'))[1] - 1
-  let l:e = searchpos('\S\+', 'cen', line('.'))[1]
-  if l:s < 0 || l:e <= 0
-    echo "No token under cursor"
-    return
-  endif
-  call RipgrepWord(l:line[l:s : l:e - 1], 0)
-endfunction
-
-nnoremap <silent> <leader>3 :call <SID>GrepUnderCursor3()<CR>
+" Grep the whole whitespace-delimited WORD under the cursor
+nnoremap <silent> <leader>3 :call RipgrepWord(expand('<cWORD>'), 0)<CR>
 
 
 " ══════════════════════════════════════════════════════════════
@@ -1171,6 +1203,8 @@ function! SLFilename()
     if winwidth(0) <= 80
         let result = pathshorten(result)
     endif
+    " a literal % in a filename would otherwise be read as a statusline item
+    let result = substitute(result, '%', '%%', 'g')
     return '%#SLText# ' . result . ' '
 endfunction
 
@@ -1181,20 +1215,11 @@ function! SLModified()
 endfunction
 
 function! SLVCS()
-    if exists('b:gitsigns_status_dict')
-        let d    = b:gitsigns_status_dict
-        let head = get(d, 'head', '')
-        if head ==# '' | return '' | endif
-        if len(head) > 20 | let head = head[:16] . '…' | endif
-        let out = '%#SLExtra#  ' . head
-        if get(d, 'added',   0) > 0 | let out .= '%#SLGitAdd# +'    . d.added   | endif
-        if get(d, 'changed', 0) > 0 | let out .= '%#SLGitChange# ~' . d.changed | endif
-        if get(d, 'removed', 0) > 0 | let out .= '%#SLGitDelete# -' . d.removed | endif
-        return out . ' '
-    endif
     if exists('*FugitiveHead')
         let head = FugitiveHead()
-        return head !=# '' ? '%#SLExtra#  ' . head . ' ' : ''
+        if head ==# '' | return '' | endif
+        if len(head) > 20 | let head = head[:16] . '…' | endif
+        return '%#SLExtra#  ' . substitute(head, '%', '%%', 'g') . ' '
     endif
     return ''
 endfunction
@@ -1247,7 +1272,9 @@ function! SLScrollbar()
 endfunction
 
 function! SLCharcount()
-    return &filetype ==# 'alpha' ? '' : '%#SLExtra# ' . wordcount().chars . ' '
+    " wordcount() is slow on big files and the statusline redraws constantly
+    if &filetype ==# 'alpha' || line('$') >= 5000 | return '' | endif
+    return '%#SLExtra# ' . wordcount().chars . ' '
 endfunction
 
 function! SLLinecount()
@@ -1303,7 +1330,6 @@ set statusline=%!ActiveStatusline()
 let s:marks_save_path  = expand('~/.vim/marks.json')
 let s:marks_buf        = -1
 let s:marks_win        = -1
-let s:last_closed_buf  = ''
 " Bright enough to read on habamax's dark background
 let g:marks_colors     = { 'global': '#e5c07b', 'local': '#61afef' }
 
@@ -1334,14 +1360,9 @@ call s:InitMarksSigns()
 " ── Snapshot ──────────────────────────────────────────────────
 " Lowercase marks (a-z) are buffer-local, but getpos("'x") always
 " resolves against the *current* buffer — its returned bufnum is
-" only ever non-zero for numbered/uppercase marks. The old version
-" of this function looped over every buffer and called getpos() on
-" each iteration expecting it to reflect that loop's buffer, so it
-" actually re-read the active buffer's marks every time and only
-" ever attributed them correctly when bnr happened to match the
-" buffer that was current when the snapshot ran. getmarklist({buf})
+" only ever non-zero for numbered/uppercase marks. getmarklist({buf})
 " queries a specific buffer's local marks directly, so it's used
-" here instead (with a buffer-switching fallback for very old Vim).
+" here (with a buffer-switching fallback for very old Vim).
 function! s:GetLocalMarksForBuf(bnr)
   let result = {}
 
@@ -1402,70 +1423,76 @@ function! s:MarksSnapshot()
   return data
 endfunction
 
-" ── Persistence: save ─────────────────────────────────────────
-function! s:MarksSave()
-  let data    = s:MarksSnapshot()
-  let encoded = json_encode(data)
+" ── Persistence ───────────────────────────────────────────────
+function! s:MarksReadFile()
+  if !filereadable(s:marks_save_path) | return {} | endif
   try
-    call writefile([encoded], s:marks_save_path)
-    echo printf('[marks] saved %d global, %d file(s) with local marks',
-          \ len(data.global), len(data.local))
+    let l:d = json_decode(join(readfile(s:marks_save_path), ''))
+  catch
+    return {}
+  endtry
+  return type(l:d) == v:t_dict ? l:d : {}
+endfunction
+
+" Live marks merged over what is on disk, so files not opened this
+" session keep their saved marks.
+function! s:MarksMerged()
+  let l:snap  = s:MarksSnapshot()
+  let l:old   = s:MarksReadFile()
+  let l:local = type(get(l:old, 'local', 0)) == v:t_dict ? l:old.local : {}
+  for l:bnr in range(1, bufnr('$'))
+    if buflisted(l:bnr) && bufloaded(l:bnr) && getbufvar(l:bnr, 'marks_loaded', 0)
+      let l:f = fnamemodify(bufname(l:bnr), ':p')
+      if has_key(l:local, l:f) | call remove(l:local, l:f) | endif
+    endif
+  endfor
+  call extend(l:local, l:snap.local)
+  let l:snap.local = l:local
+  return l:snap
+endfunction
+
+function! s:MarksSave(...)
+  let l:quiet = a:0 ? a:1 : 0
+  let data = s:MarksMerged()
+  try
+    call writefile([json_encode(data)], s:marks_save_path)
+    if !l:quiet
+      echo printf('[marks] saved %d global, %d file(s) with local marks',
+            \ len(data.global), len(data.local))
+    endif
   catch
     echohl ErrorMsg | echo '[marks] write error: ' . v:exception | echohl None
   endtry
 endfunction
 
-" ── Persistence: load all ─────────────────────────────────────
 function! s:MarksLoad()
-  if !filereadable(s:marks_save_path) | return | endif
-  let raw = join(readfile(s:marks_save_path), '')
-  if raw ==# '' | return | endif
-  try
-    let data = json_decode(raw)
-  catch
-    echohl WarningMsg | echo '[marks] parse error' | echohl None
-    return
-  endtry
-
+  let data = s:MarksReadFile()
+  if empty(data) | return | endif
   if type(get(data, 'global', 0)) == v:t_dict
     for [mark, info] in items(data.global)
       if has_key(info, 'file') && has_key(info, 'lnum')
         let bnr = bufnr(info.file, 1)
         call setbufvar(bnr, '&buflisted', 1)
-        silent! call setpos("'" . mark,
-              \ [bnr, info.lnum, get(info, 'col', 0), 0])
+        silent! call setpos("'" . mark, [bnr, info.lnum, get(info, 'col', 0), 0])
       endif
     endfor
   endif
-
-  if type(get(data, 'local', 0)) == v:t_dict
-    for [fname, marks] in items(data.local)
-      let bnr = bufnr(fname)
-      if bnr != -1 && bufloaded(bnr)
-        for [mark, info] in items(marks)
-          silent! call setpos("'" . mark,
-                \ [bnr, info.lnum, get(info, 'col', 0), 0])
-        endfor
-      endif
-    endfor
-  endif
+  " Lowercase marks can only be set in the *current* buffer
+  call s:MarksLoadForBuf(bufnr('%'), 1)
+  call s:MarksUpdateSigns()
 endfunction
 
-" ── Persistence: load for one buffer ──────────────────────────
-function! s:MarksLoadForBuf(bufnr)
-  let fname = fnamemodify(bufname(a:bufnr), ':p')
-  if fname ==# '' || !filereadable(s:marks_save_path) | return | endif
-  let raw = join(readfile(s:marks_save_path), '')
-  if raw ==# '' | return | endif
-  try
-    let data = json_decode(raw)
-  catch
+" Runs once per buffer (unless forced) so it never overwrites live marks.
+function! s:MarksLoadForBuf(bufnr, ...)
+  let l:force = a:0 ? a:1 : 0
+  if a:bufnr <= 0 || bufname(a:bufnr) ==# '' || getbufvar(a:bufnr, '&buftype') !=# ''
     return
-  endtry
-  let locals = get(get(data, 'local', {}), fname, {})
-  for [mark, info] in items(locals)
-    silent! call setpos("'" . mark,
-          \ [a:bufnr, info.lnum, get(info, 'col', 0), 0])
+  endif
+  if !l:force && getbufvar(a:bufnr, 'marks_loaded', 0) | return | endif
+  call setbufvar(a:bufnr, 'marks_loaded', 1)
+  let l:locals = get(get(s:MarksReadFile(), 'local', {}), fnamemodify(bufname(a:bufnr), ':p'), {})
+  for [mark, info] in items(l:locals)
+    silent! call setpos("'" . mark, [a:bufnr, info.lnum, get(info, 'col', 0), 0])
   endfor
 endfunction
 
@@ -1501,14 +1528,26 @@ endfunction
 
 " ── Delete all marks ──────────────────────────────────────────
 function! s:MarksDeleteAll()
+  let l:cur = bufnr('%')
   delmarks A-Z
-  delmarks a-z
+  for l:b in filter(range(1, bufnr('$')), 'buflisted(v:val) && bufloaded(v:val)')
+    silent! keepalt execute 'buffer ' . l:b
+    delmarks a-z
+  endfor
+  silent! keepalt execute 'buffer ' . l:cur
+  call writefile([json_encode({'global': {}, 'local': {}})], s:marks_save_path)
+  call s:MarksUpdateSigns()
+  call s:MarksRefreshPanel()
   echo '[marks] deleted all marks'
-  call s:MarksSave()
 endfunction
 
 " ── Panel: build lines ────────────────────────────────────────
+" Each panel line remembers its own jump target, so jumping no longer
+" reads the JSON or guesses the file.
+let s:marks_targets = {}
+
 function! s:MarksBuildLines(data)
+  let s:marks_targets = {}
   let lines = [
         \ '╔════════════════════════════════════════╗',
         \ '║          📍 ALL MARKS                 ║',
@@ -1522,9 +1561,9 @@ function! s:MarksBuildLines(data)
     for c in range(char2nr('A'), char2nr('Z'))
       let mark = nr2char(c)
       if has_key(a:data.global, mark)
-        let info  = a:data.global[mark]
-        let short = fnamemodify(info.file, ':~:.')
-        call add(lines, printf("  '%s  %s:%d", mark, short, info.lnum))
+        let info = a:data.global[mark]
+        call add(lines, printf("  '%s  %s:%d", mark, fnamemodify(info.file, ':~:.'), info.lnum))
+        let s:marks_targets[len(lines)] = info
         let has_marks = 1
       endif
     endfor
@@ -1540,6 +1579,7 @@ function! s:MarksBuildLines(data)
         if has_key(a:data.local[fname], mark)
           let info = a:data.local[fname][mark]
           call add(lines, printf("    '%s  line %d", mark, info.lnum))
+          let s:marks_targets[len(lines)] = extend({'file': fname}, info, 'keep')
           let has_marks = 1
         endif
       endfor
@@ -1550,7 +1590,6 @@ function! s:MarksBuildLines(data)
   if !has_marks
     call add(lines, '  (no marks set)')
   endif
-
   call add(lines, '')
   call add(lines, 'ENTER / l — jump   q / <M-q> — close')
   return lines
@@ -1560,8 +1599,7 @@ endfunction
 function! s:MarksRefreshPanel()
   if s:marks_win == -1 || !win_id2win(s:marks_win) | return | endif
   if s:marks_buf == -1 || !bufexists(s:marks_buf)  | return | endif
-  let data  = s:MarksSnapshot()
-  let lines = s:MarksBuildLines(data)
+  let lines = s:MarksBuildLines(s:MarksMerged())
   call setbufvar(s:marks_buf, '&modifiable', 1)
   call deletebufline(s:marks_buf, 1, '$')
   call setbufline(s:marks_buf, 1, lines)
@@ -1570,37 +1608,11 @@ endfunction
 
 " ── Panel: jump from panel line ───────────────────────────────
 function! s:MarksJump()
-  let line     = getline('.')
-  let mark_chr = matchstr(line, "'\\zs\\w\\ze")
-  if mark_chr ==# '' | return | endif
-
-  if !filereadable(s:marks_save_path) | return | endif
-  let raw = join(readfile(s:marks_save_path), '')
-  if raw ==# '' | return | endif
-  try
-    let data = json_decode(raw)
-  catch
-    return
-  endtry
-
-  let globals = get(data, 'global', {})
-  if has_key(globals, mark_chr)
-    let info = globals[mark_chr]
-    call s:MarksClosePanel()
-    execute 'edit ' . fnameescape(info.file)
-    call cursor(info.lnum, get(info, 'col', 0))
-    return
-  endif
-
-  for [fname, marks] in items(get(data, 'local', {}))
-    if has_key(marks, mark_chr)
-      let info = marks[mark_chr]
-      call s:MarksClosePanel()
-      execute 'edit ' . fnameescape(fname)
-      call cursor(info.lnum, get(info, 'col', 0))
-      return
-    endif
-  endfor
+  let info = get(s:marks_targets, line('.'), {})
+  if empty(info) | return | endif
+  call s:MarksClosePanel()
+  execute 'edit ' . fnameescape(info.file)
+  call cursor(info.lnum, max([get(info, 'col', 1), 1]))
 endfunction
 
 " ── Panel: close ──────────────────────────────────────────────
@@ -1629,7 +1641,7 @@ function! s:MarksShow()
     call bufload(s:marks_buf)
   endif
 
-  let lines = s:MarksBuildLines(s:MarksSnapshot())
+  let lines = s:MarksBuildLines(s:MarksMerged())
   call setbufvar(s:marks_buf, '&modifiable', 1)
   call deletebufline(s:marks_buf, 1, '$')
   call setbufline(s:marks_buf, 1, lines)
@@ -1647,9 +1659,11 @@ function! s:MarksShow()
 endfunction
 
 " ── Intercept m{x} to refresh signs + panel ───────────────────
+" Saves quietly after every mark so a crash doesn't lose them.
 function! s:SetMarkAndRefresh(mark)
   execute 'normal! m' . a:mark
   call s:MarksUpdateSigns()
+  call s:MarksSave(1)
   call s:MarksRefreshPanel()
 endfunction
 
@@ -1673,9 +1687,19 @@ augroup MarksPlugin
   autocmd!
   autocmd BufWinEnter * call s:MarksLoadForBuf(expand('<abuf>') + 0)
         \ | call s:MarksUpdateSigns()
-  autocmd VimLeavePre * call s:MarksSave()
-  autocmd CursorMoved,BufEnter,BufWrite,DirChanged * call s:MarksUpdateSigns()
+  autocmd VimLeavePre * call s:MarksSave(1)
+  autocmd BufEnter,BufWrite,DirChanged,CursorHold * call s:MarksUpdateSigns()
 augroup END
 
 " ── Initial load ──────────────────────────────────────────────
-call s:MarksLoad()
+" Wait for VimEnter so argument files exist; the v:vim_did_enter branch
+" covers the auto-PlugInstall re-source of this vimrc mid-startup.
+augroup MarksInitialLoad
+  autocmd!
+  if v:vim_did_enter
+    call s:MarksLoad()
+  else
+    autocmd VimEnter * call s:MarksLoad()
+  endif
+augroup END
+
