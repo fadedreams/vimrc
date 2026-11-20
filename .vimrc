@@ -173,8 +173,9 @@ endif
 " its normal-mode half was overridden later by the :put mapping anyway).
 xnoremap <Leader>p "+p
 nnoremap <silent> <localleader>' :registers<cr>
-" Search for visually selected text (Ctrl+f)
-vnoremap <silent> <C-f> y/\V<C-r>=escape(@", '/\')<CR><CR>
+" Search for visually selected text (Ctrl+f); newlines are escaped so
+" multi-line selections work too.
+vnoremap <silent> <C-f> y/\V<C-r>=substitute(escape(@", '/\'), '\n', '\\n', 'g')<CR><CR>
 
 " ── Appearance ────────────────────────────────────────────────
 set number
@@ -184,6 +185,9 @@ set laststatus=2
 set noshowmode            " the custom statusline already shows the mode
 set showcmd
 set signcolumn=yes
+" StatusLine and StatusLineNC are highlighted identically below, which makes
+" Vim fall back to '^' / '=' fill characters. Force plain spaces.
+set fillchars+=stl:\ ,stlnc:\ 
 
 
 " ── Editing ───────────────────────────────────────────────────
@@ -259,10 +263,9 @@ nnoremap <leader>b" :split<CR>
 
 set splitright
 set splitbelow
-nnoremap <C-h> <C-w>h
-nnoremap <C-j> <C-w>j
-nnoremap <C-k> <C-w>k
-nnoremap <C-l> <C-w>l
+" <C-h/j/k/l> window navigation is provided by vim-tmux-navigator (it also
+" moves between tmux panes). Manual nnoremap lines here used to override the
+" plugin's mappings and break tmux navigation, so they were removed.
 
 
 " ── Window Swap ───────────────────────────────────────────────
@@ -456,12 +459,12 @@ nnoremap <silent> <leader>bs :new<CR>
 nnoremap <silent> <leader>b[ :bprevious<CR>
 nnoremap <silent> <leader>b] :bnext<CR>
 nnoremap <silent> <leader>br :edit!<CR>
-nnoremap <silent> \[         :bprevious<CR>
-nnoremap <silent> \]         :bnext<CR>
+nnoremap <silent> <localleader>[ :bprevious<CR>
+nnoremap <silent> <localleader>] :bnext<CR>
 
-" Cycle buffers from insert mode
-inoremap <silent> <C-h> <Esc>:bnext<CR>
-inoremap <silent> <C-l> <Esc>:bprevious<CR>
+" Cycle buffers from insert mode (h = left/previous, l = right/next)
+inoremap <silent> <C-h> <Esc>:bprevious<CR>
+inoremap <silent> <C-l> <Esc>:bnext<CR>
 
 " chmod +x / delete file from disk / rename: use vim-eunuch
 "   :Chmod +x   :Delete   :Rename {name}   :Mkdir
@@ -579,7 +582,7 @@ function! s:BufferInfo()
   endif
 
   let l:width = 48
-  let l:winid = popup_create(l:lines, {
+  call popup_create(l:lines, {
         \ 'pos':      'topleft',
         \ 'line':     3,
         \ 'col':      (&columns - l:width) / 2,
@@ -675,7 +678,9 @@ set scrolloff=8
 set sidescrolloff=8
 set wildmenu
 set wildmode=list:longest
-syntax on
+" `syntax enable` (not `syntax on`): `on` can reset the colorscheme
+" highlights that were applied above.
+syntax enable
 filetype plugin indent on
 
 
@@ -704,11 +709,8 @@ nnoremap <leader>v :Explore %:p:h<CR>
 
 " ── Netrw: p previews the file under the cursor ───────────────
 " Replaces netrw's built-in `p`. Resolves the full path of the
-" entry on the current line, opens it in a preview window (vertical
-" split on the right), and keeps the cursor in netrw so you can
-" move to another file and press p again to swap the preview.
+" entry on the current line and shows it in a popup on the right.
 " Press p on a directory to get a message (directories aren't previewed).
-" Close the preview with :pclose or <C-w>z.
 function! s:NetrwEntryUnderCursor()
   " Ask netrw itself first (handles thin/long/wide/tree listings)
   let l:word = ''
@@ -836,7 +838,11 @@ endfunction
 " Netrw installs its own buffer-local `p` mapping *after* FileType fires,
 " which silently overrides ours. So we (re)apply the mapping a tick later,
 " on both FileType and BufEnter (netrw rebuilds its maps on refresh too).
-function! s:MapNetrwPreview(buf)
+" The buffer number is captured when the autocmd fires (via a partial) and
+" passed to the timer callback, so the check below really tests the buffer
+" that triggered it. (The old lambda evaluated bufnr('%') at timer time,
+" which made the check meaningless.)
+function! s:MapNetrwPreview(buf, ...)
   if bufnr('%') == a:buf && &filetype ==# 'netrw'
     nnoremap <buffer> <silent> <nowait> p :call <SID>NetrwPreview()<CR>
   endif
@@ -844,18 +850,24 @@ endfunction
 
 augroup NetrwPreviewMap
   autocmd!
-  autocmd FileType netrw call timer_start(0, {-> s:MapNetrwPreview(bufnr('%'))})
-  autocmd BufEnter * if &filetype ==# 'netrw' | call timer_start(0, {-> s:MapNetrwPreview(bufnr('%'))}) | endif
+  autocmd FileType netrw call timer_start(0, function('s:MapNetrwPreview', [bufnr('%')]))
+  autocmd BufEnter * if &filetype ==# 'netrw'
+        \ | call timer_start(0, function('s:MapNetrwPreview', [bufnr('%')]))
+        \ | endif
 augroup END
 
 
 " ── Copy Path Helpers ─────────────────────────────────────────
-nnoremap <leader>yy :let @+ = fnamemodify(expand('%'), ':.')<CR>
-      \:echo "Copied relative: " . fnamemodify(expand('%'), ':.')<CR>
-nnoremap <leader>yn :let @+ = expand('%:t')<CR>
-      \:echo "Copied name: " . expand('%:t')<CR>
-nnoremap <leader>yp :let @+ = expand('%:p')<CR>
-      \:echo "Copied absolute: " . expand('%:p')<CR>
+" Falls back to the unnamed register when Vim has no +clipboard.
+function! s:CopyPath(mod, label)
+  let l:val = expand(a:mod)
+  call setreg(has('clipboard') ? '+' : '"', l:val)
+  echo 'Copied ' . a:label . ': ' . l:val
+endfunction
+
+nnoremap <silent> <leader>yy :call <SID>CopyPath('%:.', 'relative')<CR>
+nnoremap <silent> <leader>yn :call <SID>CopyPath('%:t', 'name')<CR>
+nnoremap <silent> <leader>yp :call <SID>CopyPath('%:p', 'absolute')<CR>
 
 
 " ── Diff Split Picker ─────────────────────────────────────────
@@ -865,7 +877,7 @@ nnoremap <leader>yp :let @+ = expand('%:p')<CR>
 " netrw directory.
 let s:diff_origin = -1
 
-function! s:MapDiffPicker(buf)
+function! s:MapDiffPicker(buf, ...)
   if bufnr('%') == a:buf && &filetype ==# 'netrw'
     nnoremap <buffer> <silent> <nowait> <CR> :call <SID>NetrwDiffOpen()<CR>
     nnoremap <buffer> <silent> <nowait> q    :call <SID>DiffPickerClose()<CR>
@@ -885,8 +897,9 @@ endfunction
 function! OpenDiffPicker()
   let s:diff_origin = bufnr('%')
   execute 'Explore ' . fnameescape(expand('%:p:h'))
-  call s:MapDiffPicker(bufnr('%'))
-  call timer_start(0, {-> s:MapDiffPicker(bufnr('%'))})   " netrw re-applies its maps
+  let l:nb = bufnr('%')
+  call s:MapDiffPicker(l:nb)
+  call timer_start(0, function('s:MapDiffPicker', [l:nb]))   " netrw re-applies its maps
 endfunction
 
 function! s:NetrwDiffOpen()
@@ -894,7 +907,7 @@ function! s:NetrwDiffOpen()
   if empty(l:target) | return | endif
   if isdirectory(l:target)
     execute 'edit ' . fnameescape(l:target)
-    call timer_start(0, {-> s:MapDiffPicker(bufnr('%'))})
+    call timer_start(0, function('s:MapDiffPicker', [bufnr('%')]))
     return
   endif
   if filereadable(l:target)
@@ -1145,22 +1158,22 @@ nnoremap <silent> <leader>3 :call RipgrepWord(expand('<cWORD>'), 0)<CR>
 " ══════════════════════════════════════════════════════════════
 
 function! s:SetStatuslineHls()
-    hi StatusLine   guifg=NONE guibg=NONE cterm=NONE
-    hi StatusLineNC guifg=NONE guibg=NONE cterm=NONE
-    hi SLAccent        guifg=#7aa2f7 guibg=NONE cterm=NONE
-    hi SLInsertAccent  guifg=#0db9d7 guibg=NONE cterm=NONE
-    hi SLVisualAccent  guifg=#a487d8 guibg=NONE cterm=NONE
-    hi SLReplaceAccent guifg=#d94a4a guibg=NONE cterm=NONE
-    hi SLCmdAccent     guifg=#e0af68 guibg=NONE cterm=NONE
-    hi SLTermAccent    guifg=#565f89 guibg=NONE cterm=NONE
-    hi SLText          guifg=#c0caf5 guibg=NONE cterm=NONE
-    hi SLExtra         guifg=#a9b1d6 guibg=NONE cterm=NONE
-    hi SLModified      guifg=#c0caf5 guibg=NONE cterm=NONE
-    hi SLGitAdd        guifg=#1abc9c guibg=NONE cterm=NONE
-    hi SLGitChange     guifg=#e0af68 guibg=NONE cterm=NONE
-    hi SLGitDelete     guifg=#db4b4b guibg=NONE cterm=NONE
-    hi SLError         guifg=#db4b4b guibg=NONE cterm=NONE
-    hi SLWarn          guifg=#e0af68 guibg=NONE cterm=NONE
+    hi StatusLine   guifg=NONE guibg=NONE gui=NONE cterm=NONE
+    hi StatusLineNC guifg=NONE guibg=NONE gui=NONE cterm=NONE
+    hi SLAccent        guifg=#7aa2f7 guibg=NONE gui=NONE cterm=NONE
+    hi SLInsertAccent  guifg=#0db9d7 guibg=NONE gui=NONE cterm=NONE
+    hi SLVisualAccent  guifg=#a487d8 guibg=NONE gui=NONE cterm=NONE
+    hi SLReplaceAccent guifg=#d94a4a guibg=NONE gui=NONE cterm=NONE
+    hi SLCmdAccent     guifg=#e0af68 guibg=NONE gui=NONE cterm=NONE
+    hi SLTermAccent    guifg=#565f89 guibg=NONE gui=NONE cterm=NONE
+    hi SLText          guifg=#c0caf5 guibg=NONE gui=NONE cterm=NONE
+    hi SLExtra         guifg=#a9b1d6 guibg=NONE gui=NONE cterm=NONE
+    hi SLModified      guifg=#c0caf5 guibg=NONE gui=NONE cterm=NONE
+    hi SLGitAdd        guifg=#1abc9c guibg=NONE gui=NONE cterm=NONE
+    hi SLGitChange     guifg=#e0af68 guibg=NONE gui=NONE cterm=NONE
+    hi SLGitDelete     guifg=#db4b4b guibg=NONE gui=NONE cterm=NONE
+    hi SLError         guifg=#db4b4b guibg=NONE gui=NONE cterm=NONE
+    hi SLWarn          guifg=#e0af68 guibg=NONE gui=NONE cterm=NONE
 endfunction
 
 call s:SetStatuslineHls()
@@ -1188,7 +1201,9 @@ let s:mode_map = {
 
 function! SLMode()
     let m    = mode()
-    let info = get(s:mode_map, m, [toupper(m), '%#SLAccent#'])
+    " mode() can return compound values (ix, Rc, nov, niI, cv, ...);
+    " fall back to the first character so they still get a proper label.
+    let info = get(s:mode_map, m, get(s:mode_map, m[0], [toupper(m), '%#SLAccent#']))
     return info[1] . ' ' . info[0] . ' %#SLText#'
 endfunction
 
@@ -1451,11 +1466,20 @@ function! s:MarksMerged()
   return l:snap
 endfunction
 
+function! s:MarksWrite(data)
+  " ~/.vim may not exist yet (e.g. before vim-plug creates it)
+  let l:dir = fnamemodify(s:marks_save_path, ':h')
+  if !isdirectory(l:dir)
+    call mkdir(l:dir, 'p', 0755)
+  endif
+  call writefile([json_encode(a:data)], s:marks_save_path)
+endfunction
+
 function! s:MarksSave(...)
   let l:quiet = a:0 ? a:1 : 0
   let data = s:MarksMerged()
   try
-    call writefile([json_encode(data)], s:marks_save_path)
+    call s:MarksWrite(data)
     if !l:quiet
       echo printf('[marks] saved %d global, %d file(s) with local marks',
             \ len(data.global), len(data.local))
@@ -1530,12 +1554,18 @@ endfunction
 function! s:MarksDeleteAll()
   let l:cur = bufnr('%')
   delmarks A-Z
+  " noautocmd: hopping through buffers must not trigger BufEnter/BufWinEnter
+  " handlers (statusline, mark reloading, ...)
   for l:b in filter(range(1, bufnr('$')), 'buflisted(v:val) && bufloaded(v:val)')
-    silent! keepalt execute 'buffer ' . l:b
+    silent! noautocmd keepalt execute 'buffer ' . l:b
     delmarks a-z
   endfor
-  silent! keepalt execute 'buffer ' . l:cur
-  call writefile([json_encode({'global': {}, 'local': {}})], s:marks_save_path)
+  silent! noautocmd keepalt execute 'buffer ' . l:cur
+  try
+    call s:MarksWrite({'global': {}, 'local': {}})
+  catch
+    echohl ErrorMsg | echo '[marks] write error: ' . v:exception | echohl None
+  endtry
   call s:MarksUpdateSigns()
   call s:MarksRefreshPanel()
   echo '[marks] deleted all marks'
@@ -1702,4 +1732,3 @@ augroup MarksInitialLoad
     autocmd VimEnter * call s:MarksLoad()
   endif
 augroup END
-
