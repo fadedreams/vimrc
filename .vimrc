@@ -738,7 +738,78 @@ function! s:NetrwEntryUnderCursor()
   return simplify(l:path)
 endfunction
 
+" Popup-based preview: nothing about the window layout changes, so the
+" netrw cursor can't jump. `p` toggles it; while it's open it follows
+" the cursor as you move between files. Leaving netrw closes it.
+let s:np_popup = 0
+
+function! s:NetrwPopupClose()
+  if s:np_popup
+    silent! call popup_close(s:np_popup)
+    let s:np_popup = 0
+  endif
+  augroup NetrwPopupLive
+    autocmd!
+  augroup END
+endfunction
+
+function! s:NetrwPopupShow(path)
+  if !filereadable(a:path) || isdirectory(a:path)
+    return
+  endif
+  if getfsize(a:path) > 2*1024*1024
+    echo '[netrw] file too large to preview'
+    return
+  endif
+  silent! call popup_close(s:np_popup)
+
+  let l:width  = get(g:, 'netrw_preview_width', float2nr(&columns * get(g:, 'netrw_preview_ratio', 0.6)))
+  let l:width  = min([l:width, &columns - 4])
+  let l:height = &lines - 6
+  let l:buf    = bufadd(a:path)
+  silent call bufload(l:buf)
+
+  let s:np_popup = popup_create(l:buf, {
+        \ 'pos':       'topleft',
+        \ 'line':      2,
+        \ 'col':       &columns - l:width - 1,
+        \ 'minwidth':  l:width,
+        \ 'maxwidth':  l:width,
+        \ 'minheight': l:height,
+        \ 'maxheight': l:height,
+        \ 'border':    [],
+        \ 'padding':   [0, 1, 0, 1],
+        \ 'highlight':       'Normal',
+        \ 'borderhighlight': ['Comment'],
+        \ 'title':     ' ' . fnamemodify(a:path, ':t') . ' ',
+        \ 'scrollbar': 0,
+        \ 'borderchars': ['─', '│', '─', '│', '┌', '┐', '┘', '└'],
+        \ 'wrap':      0,
+        \ })
+  " Syntax highlighting inside the popup
+  silent! call win_execute(s:np_popup, 'filetype detect | syntax enable')
+endfunction
+
+function! s:NetrwPopupFollow()
+  if !s:np_popup
+    return
+  endif
+  let l:path = s:NetrwEntryUnderCursor()
+  if !empty(l:path) && filereadable(l:path) && !isdirectory(l:path)
+    call s:NetrwPopupShow(l:path)
+  endif
+endfunction
+
 function! s:NetrwPreview()
+  if !has('popupwin')
+    echo '[netrw] this Vim has no popup support'
+    return
+  endif
+  " p again = close
+  if s:np_popup
+    call s:NetrwPopupClose()
+    return
+  endif
   let l:path = s:NetrwEntryUnderCursor()
   if empty(l:path)
     echo '[netrw] nothing to preview here'
@@ -752,31 +823,12 @@ function! s:NetrwPreview()
     echohl WarningMsg | echo '[netrw] cannot read: ' . l:path | echohl None
     return
   endif
-
-  " Remember exactly where we are in the netrw window
-  let l:netrw_win = win_getid()
-  let l:pos       = getcurpos()
-  let l:topline   = line('w0')
-
-  " Replace any existing preview, then open the new one on the right.
-  silent! pclose
-  execute 'silent vertical rightbelow pedit ' . fnameescape(l:path)
-
-  " Widen the preview window, then jump back to netrw.
-  " Default: 60% of the screen. Override with e.g. `let g:netrw_preview_width = 100`
-  " (absolute columns) or `let g:netrw_preview_ratio = 0.7` (fraction of screen).
-  " noautocmd: stops netrw from refreshing its listing (which resets the cursor).
-  let l:width = get(g:, 'netrw_preview_width', float2nr(&columns * get(g:, 'netrw_preview_ratio', 0.6)))
-  noautocmd silent! wincmd P
-  if &previewwindow
-    execute 'noautocmd vertical resize ' . l:width
-  endif
-  noautocmd call win_gotoid(l:netrw_win)
-
-  " Restore cursor + scroll position in netrw
-  call setpos('.', l:pos)
-  execute 'noautocmd normal! ' . l:topline . 'Gzt'
-  call setpos('.', l:pos)
+  call s:NetrwPopupShow(l:path)
+  augroup NetrwPopupLive
+    autocmd!
+    autocmd CursorMoved <buffer> call s:NetrwPopupFollow()
+    autocmd BufLeave,WinLeave <buffer> call s:NetrwPopupClose()
+  augroup END
 endfunction
 
 " Netrw installs its own buffer-local `p` mapping *after* FileType fires,
