@@ -9,6 +9,8 @@ scriptencoding utf-8
 let mapleader = " "
 let maplocalleader = "\\"      " was implicit; make it explicit
 
+command! Farsi silent %y | vnew | setlocal buftype=nofile bufhidden=wipe | silent put | silent 1d | silent %!fribidi --nobreak
+
 " No swap files (set early so it always applies)
 set noswapfile
 set nobackup
