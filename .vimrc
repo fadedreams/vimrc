@@ -16,12 +16,66 @@ set noswapfile
 set nobackup
 set nowritebackup
 
+" ── Install git / curl (cross-distro) ─────────────────────────
+" vim-plug needs git (to clone plugins) and curl (to download plug.vim).
+" If either is missing, Vim asks once at startup whether to install them.
+" Answer No to skip and carry on with the plain-Vim config.
+" Run :InstallGitCurl any time to retry manually.
+function! s:InstallGitCurl(...) abort
+  let l:ask = a:0 ? a:1 : 0
+  let l:missing = filter(['git', 'curl'], '!executable(v:val)')
+  if empty(l:missing) | return 1 | endif
+
+  if l:ask && confirm('[deps] Missing: ' . join(l:missing, ', ')
+        \ . '. Install now? (may ask for your sudo password)', "&Yes\n&No", 1) != 1
+    return 0
+  endif
+
+  " no sudo when already root or when sudo doesn't exist
+  let l:sudo = (executable('sudo') && trim(system('id -u')) !=# '0') ? 'sudo ' : ''
+  let l:pkgs = join(l:missing, ' ')
+
+  let l:managers = [
+        \ ['apt-get',      '!{S}apt-get update && {S}apt-get install -y '],
+        \ ['pacman',       '!{S}pacman -Sy --noconfirm '],
+        \ ['dnf',          '!{S}dnf install -y '],
+        \ ['yum',          '!{S}yum install -y '],
+        \ ['zypper',       '!{S}zypper --non-interactive install '],
+        \ ['apk',          '!{S}apk add '],
+        \ ['xbps-install', '!{S}xbps-install -Sy '],
+        \ ['emerge',       '!{S}emerge --ask=n '],
+        \ ['nix-env',      '!nix-env -iA nixpkgs.'],
+        \ ['brew',         '!brew install '],
+        \ ]
+
+  for [l:exe, l:tmpl] in l:managers
+    if executable(l:exe)
+      let l:cmd = substitute(l:tmpl, '{S}', l:sudo, 'g')
+      " nix-env needs one "nixpkgs.<name>" per package
+      let l:arg = l:exe ==# 'nix-env' ? join(l:missing, ' nixpkgs.') : l:pkgs
+      execute l:cmd . l:arg
+      redraw!
+      return executable('git') && executable('curl')
+    endif
+  endfor
+
+  echohl WarningMsg
+  echo '[deps] No supported package manager found. Install manually: ' . l:pkgs
+  echohl None
+  return 0
+endfunction
+
+command! -bar InstallGitCurl call s:InstallGitCurl()
+
+" Ask at startup only if something is missing (and only in an interactive Vim)
+if !executable('git') || !executable('curl')
+  call s:InstallGitCurl(1)
+endif
+
 " ── Auto-install vim-plug (only when git exists) ──────────────
-" vim-plug prints "`git` executable not found" (plus a Press-ENTER
-" prompt) from plug#begin() when git is missing, and it cannot install
-" any plugin without git anyway. So without git we skip vim-plug
-" completely: no message, no plugins. Install git and restart Vim and
-" everything bootstraps itself.
+" git/curl are installed just above (after you confirm). If git is still
+" missing (you answered No, or no package manager was found), we skip
+" vim-plug completely: no message, no plugins.
 " :PlugInstall manually if auto install did not work
 let s:plug_file = expand('~/.vim/autoload/plug.vim')
 let s:plug_url  = 'https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim'
@@ -2468,3 +2522,4 @@ augroup MarksInitialLoad
     autocmd VimEnter * call s:MarksLoad()
   endif
 augroup END
+
